@@ -1,0 +1,11 @@
+.*
+!/.buildkite/
+!/.codeclimate.yml
+!/.envrc
+!/.gitattributes
+!/.github/
+!/.gitignore
+!/.golangci.yaml
+!/.yamlfmt
+!/.yamllint
+/bin/
