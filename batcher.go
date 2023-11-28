@@ -22,22 +22,17 @@ import (
 )
 
 // BatchProcessor is the interface your batch processor needs to implement.
-type BatchProcessor[Q any, S any] interface {
-	ProcessJobs(jobs []Q) ([]S, error)
-}
-
-// Correlatable is the interface your workloads needs to implement.
-type Correlatable[K any] interface {
-	CorrelationID() K
+type BatchProcessor[Q, S any, QQ ~[]Q, SS ~[]S] interface {
+	ProcessJobs(jobs QQ) (SS, error)
 }
 
 // Use the Batcher to submit requests.
-type Batcher[Q any, S any] struct {
+type Batcher[Q, S any] struct {
 	requestChan chan<- batchRequest[Q, S]
 	done        chan struct{}
 }
 
-type batchRequest[Q any, S any] struct {
+type batchRequest[Q, S any] struct {
 	request    Q
 	resultChan chan<- batchResult[S]
 }
@@ -48,18 +43,24 @@ type batchResult[S any] struct {
 }
 
 // NewBatcher creates a new [Batcher].
-func NewBatcher[Q, S Correlatable[K], K comparable](
-	processor BatchProcessor[Q, S],
+func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
+	batchProcessor BatchProcessor[Q, S, QQ, SS],
+	correlateRequest func(Q) K,
+	correlateResult func(S) K,
 	size int,
 	duration time.Duration,
 ) *Batcher[Q, S] {
 	requestChan := make(chan batchRequest[Q, S])
 
-	b := batchRunner[Q, S, K]{
+	b := batchRunner[Q, S, K, QQ, SS]{
 		batchSize:     size,
 		batchDuration: duration,
 		requestChan:   requestChan,
-		processor:     processor,
+		processor: &processor[Q, S, K, QQ, SS]{
+			processor:  batchProcessor,
+			correlateQ: correlateRequest,
+			correlateS: correlateResult,
+		},
 	}
 
 	go b.runBatcher()

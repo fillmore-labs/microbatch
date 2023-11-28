@@ -26,7 +26,13 @@ import (
 func ExampleBatcher() {
 	// Initialize
 	processor := &RemoteProcessor{}
-	batcher := microbatch.NewBatcher(processor, 3, 1*time.Millisecond)
+	batcher := microbatch.NewBatcher(
+		processor,
+		func(j *Job) JobID { return j.ID },
+		func(r *JobResult) JobID { return r.ID },
+		3,
+		1*time.Millisecond,
+	)
 
 	// Submit jobs
 	const iterations = 5

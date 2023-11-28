@@ -16,27 +16,46 @@ package microbatch_test
 
 import (
 	"fmt"
+)
 
-	"fillmore-labs.com/microbatch"
+type (
+	JobID int
+
+	Job struct {
+		ID JobID
+	}
+
+	JobResult struct {
+		ID   JobID
+		Body string
+	}
+
+	Jobs       []*Job
+	JobResults []*JobResult
 )
 
 type RemoteProcessor struct{}
 
-func (p *RemoteProcessor) ProcessJobs(jobs []*Job) ([]*JobResult, error) {
-	result := make([]*JobResult, 0, len(jobs))
+func (p *RemoteProcessor) ProcessJobs(jobs Jobs) (JobResults, error) {
+	results := make(JobResults, 0, len(jobs))
 	for _, job := range jobs {
-		body := fmt.Sprintf("Processed job %d", job.ID)
-		result = append(result, &JobResult{ID: job.ID, Body: body})
+		result := &JobResult{
+			ID:   job.ID,
+			Body: fmt.Sprintf("Processed job %d", job.ID),
+		}
+		results = append(results, result)
 	}
 
-	return result, nil
+	return results, nil
 }
 
 func ExampleBatchProcessor() {
-	var processor microbatch.BatchProcessor[*Job, *JobResult] = &RemoteProcessor{}
-
-	result, _ := processor.ProcessJobs([]*Job{})
-	fmt.Println(result)
+	processor := &RemoteProcessor{}
+	results, _ := processor.ProcessJobs(Jobs{&Job{ID: 1}, &Job{ID: 2}})
+	for _, result := range results {
+		fmt.Println(result.Body)
+	}
 	// Output:
-	// []
+	// Processed job 1
+	// Processed job 2
 }

@@ -18,18 +18,18 @@ import (
 	"time"
 )
 
-type batchRunner[Q, S Correlatable[K], K comparable] struct {
+type batchRunner[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
 	batchSize     int
 	batchDuration time.Duration
 	requestChan   <-chan batchRequest[Q, S]
-	processor     BatchProcessor[Q, S]
+	processor     *processor[Q, S, K, QQ, SS]
 	timerRunning  bool
 	timer         *time.Timer
 	batch         []batchRequest[Q, S]
 }
 
 // Run batch collection until the request channel is cloes.
-func (b *batchRunner[Q, S, K]) runBatcher() {
+func (b *batchRunner[Q, S, K, QQ, SS]) runBatcher() {
 	b.timer = newTimer()
 	b.batch = make([]batchRequest[Q, S], 0, b.batchSize)
 
@@ -63,7 +63,7 @@ func (b *batchRunner[Q, S, K]) runBatcher() {
 }
 
 // Stop timer and send out batch data.
-func (b *batchRunner[Q, S, K]) sendBatch() {
+func (b *batchRunner[Q, S, K, QQ, SS]) sendBatch() {
 	if b.timerRunning {
 		if !b.timer.Stop() {
 			<-b.timer.C
@@ -71,7 +71,7 @@ func (b *batchRunner[Q, S, K]) sendBatch() {
 		b.timerRunning = false
 	}
 
-	go process(b.processor, b.batch)
+	go b.processor.process(b.batch)
 	b.batch = make([]batchRequest[Q, S], 0, b.batchSize)
 }
 
