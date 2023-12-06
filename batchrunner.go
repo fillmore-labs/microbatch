@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 package microbatch
 
@@ -21,17 +23,17 @@ import (
 type batchRunner[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
 	batchSize     int
 	batchDuration time.Duration
-	requestChan   <-chan batchRequest[Q, S]
+	requestChan   <-chan bRequest[Q, S]
 	processor     *processor[Q, S, K, QQ, SS]
 	timerRunning  bool
 	timer         *time.Timer
-	batch         []batchRequest[Q, S]
+	batch         []bRequest[Q, S]
 }
 
-// Run batch collection until the request channel is cloes.
+// Run batch collection until the request channel is closed.
 func (b *batchRunner[Q, S, K, QQ, SS]) runBatcher() {
 	b.timer = newTimer()
-	b.batch = make([]batchRequest[Q, S], 0, b.batchSize)
+	b.batch = make([]bRequest[Q, S], 0, b.batchSize)
 
 	for {
 		select {
@@ -42,23 +44,28 @@ func (b *batchRunner[Q, S, K, QQ, SS]) runBatcher() {
 				return
 			}
 
-			b.batch = append(b.batch, request)
-
-			switch len(b.batch) {
-			case b.batchSize:
-				b.sendBatch()
-
-			case 1:
-				// Start timer if this is the first entry in the batch
-				b.timerRunning = true
-				b.timer.Reset(b.batchDuration)
-			}
+			b.addRequest(request)
 
 		case <-b.timer.C:
 			// Send out batch
 			b.timerRunning = false
 			b.sendBatch()
 		}
+	}
+}
+
+// Add request to batch. If batch is full, send out batch.
+func (b *batchRunner[Q, S, K, QQ, SS]) addRequest(request bRequest[Q, S]) {
+	b.batch = append(b.batch, request)
+
+	switch len(b.batch) {
+	case b.batchSize:
+		b.sendBatch()
+
+	case 1:
+		// Start timer if this is the first entry in the batch
+		b.timerRunning = true
+		b.timer.Reset(b.batchDuration)
 	}
 }
 
@@ -72,7 +79,7 @@ func (b *batchRunner[Q, S, K, QQ, SS]) sendBatch() {
 	}
 
 	go b.processor.process(b.batch)
-	b.batch = make([]batchRequest[Q, S], 0, b.batchSize)
+	b.batch = make([]bRequest[Q, S], 0, b.batchSize)
 }
 
 func newTimer() *time.Timer {

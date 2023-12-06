@@ -64,4 +64,4 @@ batcher.Shutdown()
 
 
 ## Links
-- [Example project calling AWS Labda](https://github.com/fillmore-labs/microbatch-lambda)
+- [Example project calling AWS Lambda](https://github.com/fillmore-labs/microbatch-lambda)

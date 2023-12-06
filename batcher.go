@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 package microbatch
 
@@ -26,20 +28,29 @@ type BatchProcessor[Q, S any, QQ ~[]Q, SS ~[]S] interface {
 	ProcessJobs(jobs QQ) (SS, error)
 }
 
-// Use the Batcher to submit requests.
+// Batcher is used to submit requests.
 type Batcher[Q, S any] struct {
-	requestChan chan<- batchRequest[Q, S]
+	requestChan chan<- bRequest[Q, S]
 	done        chan struct{}
 }
 
-type batchRequest[Q, S any] struct {
+// Result from [Batcher.submitJob].
+type batchResult[S any] interface {
+	Result() (S, error)
+}
+
+type bRequest[Q, S any] struct {
 	request    Q
 	resultChan chan<- batchResult[S]
 }
 
-type batchResult[S any] struct {
+type bResult[S any] struct {
 	result S
 	err    error
+}
+
+func (b bResult[S]) Result() (S, error) {
+	return b.result, b.err
 }
 
 // NewBatcher creates a new [Batcher].
@@ -50,7 +61,7 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 	size int,
 	duration time.Duration,
 ) *Batcher[Q, S] {
-	requestChan := make(chan batchRequest[Q, S])
+	requestChan := make(chan bRequest[Q, S])
 
 	b := batchRunner[Q, S, K, QQ, SS]{
 		batchSize:     size,
@@ -71,7 +82,7 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 	}
 }
 
-// Shutdown needs to be called to send the last batch and terminate to goroutine.
+// Shutdown needs to be called to send the last batch and terminate the goroutine.
 // No calls to [Batcher.ExecuteJob] after this will be accepted.
 func (b *Batcher[Q, S]) Shutdown() {
 	close(b.done)
@@ -90,7 +101,7 @@ var (
 	ErrNoResult = errors.New("no result")
 )
 
-// Submit a job and wait for the result.
+// ExecuteJob submits a job and waits for the result.
 func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
 	resultChan := make(chan batchResult[S])
 
@@ -101,23 +112,23 @@ func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
 
 	select {
 	case result := <-resultChan:
-		return result.result, result.err
+		return result.Result()
 
 	case <-ctx.Done():
 		return *new(S), fmt.Errorf("job canceled: %w", ctx.Err())
 	}
 }
 
-// This could be made public when we need a shared result channel.
-func (b *Batcher[Q, S]) submitJob(ctx context.Context, request Q, resultChan chan<- batchResult[S]) error {
+// Submit a job.
+func (b *Batcher[Q, S]) submitJob(ctx context.Context, r Q, resultChan chan<- batchResult[S]) error {
 	select {
 	case _, ok := <-b.done:
 		if !ok {
 			return ErrBatcherTerminated
 		}
 
-	case b.requestChan <- batchRequest[Q, S]{
-		request:    request,
+	case b.requestChan <- bRequest[Q, S]{
+		request:    r,
 		resultChan: resultChan,
 	}:
 

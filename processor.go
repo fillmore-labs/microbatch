@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 package microbatch
 
@@ -24,56 +26,55 @@ type processor[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
 	correlateS func(jobResult S) K
 }
 
-func (p *processor[Q, S, K, QQ, SS]) process(request []batchRequest[Q, S]) {
-	jobs, c := p.separateJobs(request)
+func (p *processor[Q, S, K, QQ, SS]) process(request []bRequest[Q, S]) {
+	jobs, resultChannels := p.separateJobs(request)
 
 	results, err := p.processor.ProcessJobs(jobs)
 	if err != nil {
-		p.sendError(c, err)
+		p.sendError(resultChannels, err)
 
 		return
 	}
 
-	p.sendResults(c, results)
-	p.sendError(c, ErrNoResult)
+	p.sendResults(resultChannels, results)
+	p.sendError(resultChannels, ErrNoResult)
 }
 
 func (p *processor[Q, S, K, QQ, SS]) separateJobs(
-	request []batchRequest[Q, S],
+	request []bRequest[Q, S],
 ) ([]Q, map[K]chan<- batchResult[S]) {
 	jobs := make([]Q, 0, len(request))
-	c := make(map[K]chan<- batchResult[S], len(request))
+	resultChannels := make(map[K]chan<- batchResult[S], len(request))
 
 	for _, job := range request {
 		jobRequest := job.request
 		jobs = append(jobs, jobRequest)
-		id := p.correlateQ(jobRequest)
-		c[id] = job.resultChan
+		correlationID := p.correlateQ(jobRequest)
+		resultChannels[correlationID] = job.resultChan
 	}
 
-	return jobs, c
+	return jobs, resultChannels
 }
 
-func (p *processor[Q, S, K, QQ, SS]) sendResults(c map[K]chan<- batchResult[S], results []S) {
+func (p *processor[Q, S, K, QQ, SS]) sendResults(resultChannels map[K]chan<- batchResult[S], results []S) {
 	for _, result := range results {
-		id := p.correlateS(result)
-		resultChan, ok := c[id]
+		correlationID := p.correlateS(result)
+		resultChan, ok := resultChannels[correlationID]
 		if ok {
-			result := batchResult[S]{
+			resultChan <- bResult[S]{
 				result: result,
 				err:    nil,
 			}
-			resultChan <- result
-			delete(c, id)
+			delete(resultChannels, correlationID)
 		} else {
-			slog.Warn("Uncorrelated result dropped", "id", id)
+			slog.Warn("Uncorrelated result dropped", "id", correlationID)
 		}
 	}
 }
 
-func (*processor[Q, S, K, QQ, SS]) sendError(c map[K]chan<- batchResult[S], err error) {
-	for _, ch := range c {
-		ch <- batchResult[S]{
+func (*processor[Q, S, K, QQ, SS]) sendError(resultChannels map[K]chan<- batchResult[S], err error) {
+	for _, resultChan := range resultChannels {
+		resultChan <- bResult[S]{
 			result: *new(S),
 			err:    err,
 		}

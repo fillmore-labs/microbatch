@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 package microbatch_test
 
@@ -23,7 +25,7 @@ import (
 	"fillmore-labs.com/microbatch"
 )
 
-func ExampleBatcher() {
+func Example() {
 	// Initialize
 	processor := &RemoteProcessor{}
 	batcher := microbatch.NewBatcher(
@@ -31,24 +33,25 @@ func ExampleBatcher() {
 		func(j *Job) JobID { return j.ID },
 		func(r *JobResult) JobID { return r.ID },
 		3,
-		1*time.Millisecond,
+		10*time.Millisecond,
 	)
 
-	// Submit jobs
+	ctx := context.Background()
 	const iterations = 5
 	var wg sync.WaitGroup
-	wg.Add(iterations)
-	ctx := context.Background()
+
+	// Submit jobs
 	for i := 1; i <= iterations; i++ {
+		wg.Add(1)
 		go func(i int) {
 			result, _ := batcher.ExecuteJob(ctx, &Job{ID: JobID(i)})
 			fmt.Println(result.Body)
 			wg.Done()
 		}(i) // https://go.dev/doc/faq#closures_and_goroutines
 	}
-	wg.Wait()
 
 	// Shut down
+	wg.Wait()
 	batcher.Shutdown()
 	// Unordered output:
 	// Processed job 1
