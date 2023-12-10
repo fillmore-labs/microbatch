@@ -82,6 +82,7 @@ func (b *batchRunner[Q, S, K, QQ, SS]) sendBatch() {
 	b.batch = make([]bRequest[Q, S], 0, b.batchSize)
 }
 
+// Creates a new timer that is not running.
 func newTimer() *time.Timer {
 	timer := time.NewTimer(0)
 	<-timer.C

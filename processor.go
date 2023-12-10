@@ -21,27 +21,28 @@ import (
 )
 
 type processor[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
-	processor  BatchProcessor[Q, S, QQ, SS]
+	processor  BatchProcessor[QQ, SS]
 	correlateQ func(job Q) K
 	correlateS func(jobResult S) K
 }
 
 func (p *processor[Q, S, K, QQ, SS]) process(request []bRequest[Q, S]) {
-	jobs, resultChannels := p.separateJobs(request)
+	jobs, resultChannels := separateJobs(request, p.correlateQ)
 
 	results, err := p.processor.ProcessJobs(jobs)
 	if err != nil {
-		p.sendError(resultChannels, err)
+		sendError(err, resultChannels)
 
 		return
 	}
 
-	p.sendResults(resultChannels, results)
-	p.sendError(resultChannels, ErrNoResult)
+	sendResults(results, resultChannels, p.correlateS)
+	sendError(ErrNoResult, resultChannels)
 }
 
-func (p *processor[Q, S, K, QQ, SS]) separateJobs(
+func separateJobs[Q, S any, K comparable](
 	request []bRequest[Q, S],
+	correlateQ func(Q) K,
 ) ([]Q, map[K]chan<- batchResult[S]) {
 	jobs := make([]Q, 0, len(request))
 	resultChannels := make(map[K]chan<- batchResult[S], len(request))
@@ -49,16 +50,21 @@ func (p *processor[Q, S, K, QQ, SS]) separateJobs(
 	for _, job := range request {
 		jobRequest := job.request
 		jobs = append(jobs, jobRequest)
-		correlationID := p.correlateQ(jobRequest)
+
+		correlationID := correlateQ(jobRequest)
 		resultChannels[correlationID] = job.resultChan
 	}
 
 	return jobs, resultChannels
 }
 
-func (p *processor[Q, S, K, QQ, SS]) sendResults(resultChannels map[K]chan<- batchResult[S], results []S) {
+func sendResults[S any, K comparable](
+	results []S,
+	resultChannels map[K]chan<- batchResult[S],
+	correlateS func(S) K,
+) {
 	for _, result := range results {
-		correlationID := p.correlateS(result)
+		correlationID := correlateS(result)
 		resultChan, ok := resultChannels[correlationID]
 		if ok {
 			resultChan <- bResult[S]{
@@ -72,7 +78,7 @@ func (p *processor[Q, S, K, QQ, SS]) sendResults(resultChannels map[K]chan<- bat
 	}
 }
 
-func (*processor[Q, S, K, QQ, SS]) sendError(resultChannels map[K]chan<- batchResult[S], err error) {
+func sendError[S any, K comparable](err error, resultChannels map[K]chan<- batchResult[S]) {
 	for _, resultChan := range resultChannels {
 		resultChan <- bResult[S]{
 			result: *new(S),

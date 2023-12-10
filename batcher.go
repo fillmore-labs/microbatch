@@ -24,7 +24,7 @@ import (
 )
 
 // BatchProcessor is the interface your batch processor needs to implement.
-type BatchProcessor[Q, S any, QQ ~[]Q, SS ~[]S] interface {
+type BatchProcessor[QQ, SS any] interface {
 	ProcessJobs(jobs QQ) (SS, error)
 }
 
@@ -55,7 +55,7 @@ func (b bResult[S]) Result() (S, error) {
 
 // NewBatcher creates a new [Batcher].
 func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
-	batchProcessor BatchProcessor[Q, S, QQ, SS],
+	batchProcessor BatchProcessor[QQ, SS],
 	correlateRequest func(Q) K,
 	correlateResult func(S) K,
 	size int,
