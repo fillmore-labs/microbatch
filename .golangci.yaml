@@ -24,3 +24,9 @@ linters:
     - varnamelen
     - wrapcheck
     - wsl
+issues:
+  exclude-rules:
+    - linters:
+        - unused
+      path: processor.go
+  

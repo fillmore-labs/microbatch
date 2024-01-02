@@ -23,52 +23,54 @@ import (
 	"time"
 )
 
-// BatchProcessor is the interface your batch processor needs to implement.
-type BatchProcessor[QQ, SS any] interface {
-	ProcessJobs(jobs QQ) (SS, error)
-}
-
-// Batcher is used to submit requests.
+// Batcher handles submitting requests in batches and returning results through channels.
 type Batcher[Q, S any] struct {
-	requestChan chan<- bRequest[Q, S]
-	done        chan struct{}
+	requests chan<- batchRequest[Q, S]
+	done     chan struct{}
 }
 
-// Result from [Batcher.submitJob].
-type batchResult[S any] interface {
+// batchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
+type batchRequest[Q, S any] struct {
+	request    Q
+	resultChan chan<- BatchResult[S]
+}
+
+// BatchResult defines the interface for returning results from batch processing.
+type BatchResult[S any] interface {
 	Result() (S, error)
 }
 
-type bRequest[Q, S any] struct {
-	request    Q
-	resultChan chan<- batchResult[S]
+// processor defines the interface for processing batches of requests.
+type processor[Q, S any] interface {
+	process(requests []batchRequest[Q, S])
 }
 
-type bResult[S any] struct {
-	result S
-	err    error
-}
-
-func (b bResult[S]) Result() (S, error) {
-	return b.result, b.err
+// options defines configurable parameters for the batcher.
+type options struct {
+	size    int
+	timeout time.Duration
 }
 
 // NewBatcher creates a new [Batcher].
 func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
-	batchProcessor BatchProcessor[QQ, SS],
+	processor BatchProcessor[QQ, SS],
 	correlateRequest func(Q) K,
 	correlateResult func(S) K,
-	size int,
-	duration time.Duration,
+	opts ...Option,
 ) *Batcher[Q, S] {
-	requestChan := make(chan bRequest[Q, S])
+	option := &options{}
+	for _, opt := range opts {
+		opt(option)
+	}
 
-	b := batchRunner[Q, S, K, QQ, SS]{
-		batchSize:     size,
-		batchDuration: duration,
-		requestChan:   requestChan,
-		processor: &processor[Q, S, K, QQ, SS]{
-			processor:  batchProcessor,
+	requests := make(chan batchRequest[Q, S])
+
+	b := batchRunner[Q, S]{
+		requests:      requests,
+		batchSize:     option.size,
+		batchDuration: option.timeout,
+		processor: &batchProcessor[Q, S, K, QQ, SS]{
+			processor:  processor,
 			correlateQ: correlateRequest,
 			correlateS: correlateResult,
 		},
@@ -77,19 +79,26 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 	go b.runBatcher()
 
 	return &Batcher[Q, S]{
-		requestChan: requestChan,
-		done:        make(chan struct{}),
+		requests: requests,
+		done:     make(chan struct{}),
 	}
 }
 
-// Shutdown needs to be called to send the last batch and terminate the goroutine.
-// No calls to [Batcher.ExecuteJob] after this will be accepted.
-func (b *Batcher[Q, S]) Shutdown() {
-	close(b.done)
+// Option defines configurable parameters for [NewBatcher].
+type Option func(*options)
 
-	rc := b.requestChan
-	b.requestChan = nil
-	close(rc)
+// WithSize is an option to configure the batch size.
+func WithSize(size int) Option {
+	return func(o *options) {
+		o.size = size
+	}
+}
+
+// WithTimeout is an option to configure the batch timeout.
+func WithTimeout(timeout time.Duration) Option {
+	return func(o *options) {
+		o.timeout = timeout
+	}
 }
 
 // Errors returned from [Batcher.ExecuteJob].
@@ -103,9 +112,7 @@ var (
 
 // ExecuteJob submits a job and waits for the result.
 func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
-	resultChan := make(chan batchResult[S])
-
-	err := b.submitJob(ctx, request, resultChan)
+	resultChan, err := b.SubmitJob(ctx, request)
 	if err != nil {
 		return *new(S), err
 	}
@@ -119,22 +126,34 @@ func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
 	}
 }
 
-// Submit a job.
-func (b *Batcher[Q, S]) submitJob(ctx context.Context, r Q, resultChan chan<- batchResult[S]) error {
+// SubmitJob Submits a job without waiting for the result.
+func (b *Batcher[Q, S]) SubmitJob(ctx context.Context, request Q) (<-chan BatchResult[S], error) {
+	resultChan := make(chan BatchResult[S])
+
+	r := batchRequest[Q, S]{
+		request:    request,
+		resultChan: resultChan,
+	}
+
 	select {
 	case _, ok := <-b.done:
 		if !ok {
-			return ErrBatcherTerminated
+			return nil, ErrBatcherTerminated
 		}
 
-	case b.requestChan <- bRequest[Q, S]{
-		request:    r,
-		resultChan: resultChan,
-	}:
+	case b.requests <- r:
 
 	case <-ctx.Done():
-		return fmt.Errorf("job canceled: %w", ctx.Err())
+		return nil, fmt.Errorf("job canceled: %w", ctx.Err())
 	}
 
-	return nil
+	return resultChan, nil
+}
+
+// Shutdown needs to be called to reclaim resources and send the last batch.
+// No calls to [Batcher.SubmitJob] or [Batcher.ExecuteJob] after this will be accepted.
+func (b *Batcher[Q, S]) Shutdown() {
+	close(b.done)
+	close(b.requests)
+	b.requests = nil
 }

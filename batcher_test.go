@@ -25,15 +25,15 @@ import (
 	"fillmore-labs.com/microbatch"
 )
 
-func Example() {
+func Example_execute() {
 	// Initialize
 	processor := &RemoteProcessor{}
+	opts := []microbatch.Option{microbatch.WithSize(3), microbatch.WithTimeout(10 * time.Millisecond)}
 	batcher := microbatch.NewBatcher(
 		processor,
 		func(j *Job) JobID { return j.ID },
 		func(r *JobResult) JobID { return r.ID },
-		3,
-		10*time.Millisecond,
+		opts...,
 	)
 
 	ctx := context.Background()
@@ -44,15 +44,70 @@ func Example() {
 	for i := 1; i <= iterations; i++ {
 		wg.Add(1)
 		go func(i int) {
-			result, _ := batcher.ExecuteJob(ctx, &Job{ID: JobID(i)})
-			fmt.Println(result.Body)
-			wg.Done()
+			defer wg.Done()
+			if result, err := batcher.ExecuteJob(ctx, &Job{ID: JobID(i)}); err == nil {
+				fmt.Println(result.Body)
+			}
 		}(i) // https://go.dev/doc/faq#closures_and_goroutines
 	}
 
 	// Shut down
 	wg.Wait()
 	batcher.Shutdown()
+	// Unordered output:
+	// Processed job 1
+	// Processed job 2
+	// Processed job 3
+	// Processed job 4
+	// Processed job 5
+}
+
+func Example_submit() {
+	// Initialize
+	processor := &RemoteProcessor{}
+	batcher := microbatch.NewBatcher(
+		processor,
+		func(j *Job) JobID { return j.ID },
+		func(r *JobResult) JobID { return r.ID },
+		microbatch.WithSize(3),
+	)
+
+	ctx := context.Background()
+	ctx2, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	const iterations = 5
+
+	var wg sync.WaitGroup
+	for i := 1; i <= iterations; i++ {
+		result, err := batcher.SubmitJob(ctx, &Job{ID: JobID(i)})
+		if err != nil {
+			fmt.Printf("Error submitting job %d: %v\n", i, err)
+
+			continue
+		}
+
+		wg.Add(1)
+		go func(i int, result <-chan microbatch.BatchResult[*JobResult]) {
+			defer wg.Done()
+
+			select {
+			case r := <-result:
+				value, err := r.Result()
+				if err == nil {
+					fmt.Println(value.Body)
+				} else {
+					fmt.Printf("Error executing job %d: %v\n", i, err)
+				}
+
+			case <-ctx2.Done():
+				fmt.Printf("Job %d canceled: %v\n", i, ctx2.Err())
+			}
+		}(i, result)
+	}
+
+	// Shut down
+	batcher.Shutdown()
+	wg.Wait()
 	// Unordered output:
 	// Processed job 1
 	// Processed job 2

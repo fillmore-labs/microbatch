@@ -20,24 +20,24 @@ import (
 	"time"
 )
 
-type batchRunner[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
+type batchRunner[Q, S any] struct {
+	requests      <-chan batchRequest[Q, S]
 	batchSize     int
 	batchDuration time.Duration
-	requestChan   <-chan bRequest[Q, S]
-	processor     *processor[Q, S, K, QQ, SS]
+	processor     processor[Q, S]
 	timerRunning  bool
 	timer         *time.Timer
-	batch         []bRequest[Q, S]
+	batch         []batchRequest[Q, S]
 }
 
 // Run batch collection until the request channel is closed.
-func (b *batchRunner[Q, S, K, QQ, SS]) runBatcher() {
+func (b *batchRunner[Q, S]) runBatcher() {
 	b.timer = newTimer()
-	b.batch = make([]bRequest[Q, S], 0, b.batchSize)
+	b.batch = b.newBatch()
 
 	for {
 		select {
-		case request, ok := <-b.requestChan:
+		case request, ok := <-b.requests:
 			if !ok {
 				b.sendBatch()
 
@@ -54,8 +54,8 @@ func (b *batchRunner[Q, S, K, QQ, SS]) runBatcher() {
 	}
 }
 
-// Add request to batch. If batch is full, send out batch.
-func (b *batchRunner[Q, S, K, QQ, SS]) addRequest(request bRequest[Q, S]) {
+// Add a request to the batch. If it is full, send it out.
+func (b *batchRunner[Q, S]) addRequest(request batchRequest[Q, S]) {
 	b.batch = append(b.batch, request)
 
 	switch len(b.batch) {
@@ -63,14 +63,16 @@ func (b *batchRunner[Q, S, K, QQ, SS]) addRequest(request bRequest[Q, S]) {
 		b.sendBatch()
 
 	case 1:
-		// Start timer if this is the first entry in the batch
-		b.timerRunning = true
-		b.timer.Reset(b.batchDuration)
+		if b.batchDuration > 0 {
+			// Start timer if this is the first entry in the batch
+			b.timer.Reset(b.batchDuration)
+			b.timerRunning = true
+		}
 	}
 }
 
 // Stop timer and send out batch data.
-func (b *batchRunner[Q, S, K, QQ, SS]) sendBatch() {
+func (b *batchRunner[Q, S]) sendBatch() {
 	if b.timerRunning {
 		if !b.timer.Stop() {
 			<-b.timer.C
@@ -79,7 +81,15 @@ func (b *batchRunner[Q, S, K, QQ, SS]) sendBatch() {
 	}
 
 	go b.processor.process(b.batch)
-	b.batch = make([]bRequest[Q, S], 0, b.batchSize)
+	b.batch = b.newBatch()
+}
+
+func (b *batchRunner[Q, S]) newBatch() []batchRequest[Q, S] {
+	if b.batchSize > 0 {
+		return make([]batchRequest[Q, S], 0, b.batchSize)
+	}
+
+	return nil
 }
 
 // Creates a new timer that is not running.
