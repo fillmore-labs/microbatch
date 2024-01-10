@@ -14,5 +14,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package microbatch simplifies asynchronous microbatching.
-package microbatch
+// Package mocks contains generated test code.
+package mocks

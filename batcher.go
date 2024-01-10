@@ -1,4 +1,4 @@
-// Copyright 2023 Oliver Eikemeier. All Rights Reserved.
+// Copyright 2023-2024 Oliver Eikemeier. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,66 +21,74 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"fillmore-labs.com/microbatch/internal/collector"
+	"fillmore-labs.com/microbatch/internal/processor"
+	internal "fillmore-labs.com/microbatch/internal/types"
+	"fillmore-labs.com/microbatch/types"
 )
 
 // Batcher handles submitting requests in batches and returning results through channels.
 type Batcher[Q, S any] struct {
-	requests chan<- batchRequest[Q, S]
-	done     chan struct{}
+	requests chan<- internal.BatchRequest[Q, S]
+
+	terminating chan<- struct{}
+	terminated  <-chan struct{}
 }
 
-// batchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
-type batchRequest[Q, S any] struct {
-	request    Q
-	resultChan chan<- BatchResult[S]
-}
-
-// BatchResult defines the interface for returning results from batch processing.
-type BatchResult[S any] interface {
-	Result() (S, error)
-}
-
-// processor defines the interface for processing batches of requests.
-type processor[Q, S any] interface {
-	process(requests []batchRequest[Q, S])
-}
-
-// options defines configurable parameters for the batcher.
-type options struct {
-	size    int
-	timeout time.Duration
-}
+var (
+	// ErrBatcherTerminated is returned when the batcher is terminated.
+	ErrBatcherTerminated = errors.New("batcher terminated")
+	// ErrNoResult is returned when the response from [BatchProcessor] is missing a
+	// matching correlation ID.
+	ErrNoResult = errors.New("no result")
+)
 
 // NewBatcher creates a new [Batcher].
+//
+//   - batchProcessor is used to process batches of jobs.
+//   - correlateRequest and correlateResult functions are used to get a common key from a job and result for
+//     correlating results back to jobs.
+//   - options are used to configure the batch size and timeout.
+//
+// The batch collector is run in a goroutine.
 func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
-	processor BatchProcessor[QQ, SS],
+	batchProcessor types.BatchProcessor[QQ, SS],
 	correlateRequest func(Q) K,
 	correlateResult func(S) K,
 	opts ...Option,
 ) *Batcher[Q, S] {
-	option := &options{}
+	option := options{}
 	for _, opt := range opts {
-		opt(option)
+		opt(&option)
 	}
 
-	requests := make(chan batchRequest[Q, S])
+	requests := make(chan internal.BatchRequest[Q, S])
+	terminating := make(chan struct{})
+	terminated := make(chan struct{})
 
-	b := batchRunner[Q, S]{
-		requests:      requests,
-		batchSize:     option.size,
-		batchDuration: option.timeout,
-		processor: &batchProcessor[Q, S, K, QQ, SS]{
-			processor:  processor,
-			correlateQ: correlateRequest,
-			correlateS: correlateResult,
-		},
+	p := &processor.Processor[Q, S, K, QQ, SS]{
+		Processor:   batchProcessor,
+		CorrelateQ:  correlateRequest,
+		CorrelateS:  correlateResult,
+		ErrNoResult: ErrNoResult,
 	}
 
-	go b.runBatcher()
+	c := &collector.Collector[Q, S]{
+		Requests:      requests,
+		Terminating:   terminating,
+		Terminated:    terminated,
+		Processor:     p,
+		BatchSize:     option.Size,
+		BatchDuration: option.Timeout,
+	}
+
+	go c.Run()
 
 	return &Batcher[Q, S]{
-		requests: requests,
-		done:     make(chan struct{}),
+		requests:    requests,
+		terminating: terminating,
+		terminated:  terminated,
 	}
 }
 
@@ -90,25 +98,22 @@ type Option func(*options)
 // WithSize is an option to configure the batch size.
 func WithSize(size int) Option {
 	return func(o *options) {
-		o.size = size
+		o.Size = size
 	}
 }
 
 // WithTimeout is an option to configure the batch timeout.
 func WithTimeout(timeout time.Duration) Option {
 	return func(o *options) {
-		o.timeout = timeout
+		o.Timeout = timeout
 	}
 }
 
-// Errors returned from [Batcher.ExecuteJob].
-var (
-	// ErrBatcherTerminated is returned when the batcher is terminated.
-	ErrBatcherTerminated = errors.New("batcher terminated")
-	// ErrNoResult is returned when the response from [BatchProcessor] is missing a
-	// matching correlation ID.
-	ErrNoResult = errors.New("no result")
-)
+// options defines configurable parameters for the batcher.
+type options struct {
+	Size    int
+	Timeout time.Duration
+}
 
 // ExecuteJob submits a job and waits for the result.
 func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
@@ -127,33 +132,30 @@ func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
 }
 
 // SubmitJob Submits a job without waiting for the result.
-func (b *Batcher[Q, S]) SubmitJob(ctx context.Context, request Q) (<-chan BatchResult[S], error) {
-	resultChan := make(chan BatchResult[S])
-
-	r := batchRequest[Q, S]{
-		request:    request,
-		resultChan: resultChan,
-	}
+func (b *Batcher[Q, S]) SubmitJob(ctx context.Context, request Q) (<-chan types.BatchResult[S], error) {
+	resultChan := make(chan types.BatchResult[S], 1)
 
 	select {
-	case _, ok := <-b.done:
-		if !ok {
-			return nil, ErrBatcherTerminated
-		}
+	case b.requests <- internal.BatchRequest[Q, S]{
+		Request:    request,
+		ResultChan: resultChan,
+	}:
+		return resultChan, nil
 
-	case b.requests <- r:
+	case <-b.terminated:
+		return nil, ErrBatcherTerminated
 
 	case <-ctx.Done():
 		return nil, fmt.Errorf("job canceled: %w", ctx.Err())
 	}
-
-	return resultChan, nil
 }
 
 // Shutdown needs to be called to reclaim resources and send the last batch.
 // No calls to [Batcher.SubmitJob] or [Batcher.ExecuteJob] after this will be accepted.
 func (b *Batcher[Q, S]) Shutdown() {
-	close(b.done)
-	close(b.requests)
-	b.requests = nil
+	select {
+	case b.terminating <- struct{}{}:
+		<-b.terminated
+	case <-b.terminated:
+	}
 }

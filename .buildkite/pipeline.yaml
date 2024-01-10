@@ -1,0 +1,9 @@
+---
+steps:
+  - label: ':go: Lint'
+    commands:
+      - golangci-lint run --timeout 10m0s
+  - label: ':go: + :codeclimate: Test & Coverage'
+    commands:
+      - go test -race -coverprofile=cover.out ./...
+      - sh .buildkite/upload_coverage.sh cover.out

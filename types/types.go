@@ -14,5 +14,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package microbatch simplifies asynchronous microbatching.
-package microbatch
+package types
+
+// BatchProcessor is the interface your batch processor needs to implement.
+type BatchProcessor[QQ, SS any] interface {
+	ProcessJobs(jobs QQ) (SS, error)
+}
+
+// BatchResult defines the interface for returning results from batch processing.
+type BatchResult[S any] interface {
+	Result() (S, error)
+}

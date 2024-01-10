@@ -14,5 +14,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package microbatch simplifies asynchronous microbatching.
-package microbatch
+package types
+
+import (
+	"fillmore-labs.com/microbatch/types"
+)
+
+// BatchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
+type BatchRequest[Q, S any] struct {
+	Request    Q
+	ResultChan chan<- types.BatchResult[S]
+}

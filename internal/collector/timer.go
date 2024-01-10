@@ -14,5 +14,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package microbatch simplifies asynchronous microbatching.
-package microbatch
+package collector
+
+import (
+	"time"
+)
+
+type Timer struct {
+	C     <-chan time.Time
+	Timer TimerDelegate
+}
+
+type TimerDelegate interface {
+	Stop() bool
+	Reset(d time.Duration) bool
+}
+
+// NewTimer creates a new timer that is not running.
+func NewTimer() *Timer {
+	t := time.NewTimer(0)
+	<-t.C
+
+	return &Timer{C: t.C, Timer: t}
+}
+
+func (t *Timer) Stop() bool {
+	return t.Timer.Stop()
+}
+
+func (t *Timer) Reset(d time.Duration) bool {
+	return t.Timer.Reset(d)
+}

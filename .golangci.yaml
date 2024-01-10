@@ -24,9 +24,20 @@ linters:
     - varnamelen
     - wrapcheck
     - wsl
-issues:
-  exclude-rules:
-    - linters:
-        - unused
-      path: processor.go
-  
+linters-settings:
+  testifylint:
+    enable:
+      - bool-compare
+      - compares
+      - empty
+      - error-is-as
+      - error-nil
+      - expected-actual
+      - float-compare
+      # - go-require
+      - len
+      # - nil-compare
+      # - require-error
+      - suite-dont-use-pkg
+      - suite-extra-assert-call
+      - suite-thelper

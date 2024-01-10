@@ -1,0 +1,10 @@
+#!/bin/sh
+
+COVERAGE_REPORT="$1"
+test -r "$COVERAGE_REPORT" || exit 1
+
+echo "Upload Code Climate Coverage"
+cc-test-reporter format-coverage -t gocov -p fillmore-labs.com/microbatch -o .coverage/codeclimate.json "$COVERAGE_REPORT"
+cc-test-reporter upload-coverage -r "$CC_TEST_REPORTER_ID" -i .coverage/codeclimate.json
+
+echo "Coverage Upload Done"

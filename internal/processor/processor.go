@@ -1,4 +1,4 @@
-// Copyright 2023 Oliver Eikemeier. All Rights Reserved.
+// Copyright 2023-2024 Oliver Eikemeier. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,67 +14,68 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package microbatch
+package processor
 
 import (
 	"log/slog"
+	"sync"
+
+	internal "fillmore-labs.com/microbatch/internal/types"
+	"fillmore-labs.com/microbatch/types"
 )
 
-// BatchProcessor is the interface your batch processor needs to implement.
-type BatchProcessor[QQ, SS any] interface {
-	ProcessJobs(jobs QQ) (SS, error)
+type Processor[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
+	Processor   types.BatchProcessor[QQ, SS]
+	CorrelateQ  func(job Q) K
+	CorrelateS  func(jobResult S) K
+	ErrNoResult error
 }
 
-type batchProcessor[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
-	processor  BatchProcessor[QQ, SS]
-	correlateQ func(job Q) K
-	correlateS func(jobResult S) K
-}
+func (p *Processor[Q, S, K, QQ, SS]) Process(request []internal.BatchRequest[Q, S], wg *sync.WaitGroup) {
+	defer wg.Done()
+	jobs, resultChannels := separateJobs(request, p.CorrelateQ)
 
-func (p *batchProcessor[Q, S, K, QQ, SS]) process(request []batchRequest[Q, S]) {
-	jobs, resultChannels := separateJobs(request, p.correlateQ)
-
-	results, err := p.processor.ProcessJobs(jobs)
+	results, err := p.Processor.ProcessJobs(jobs)
 	if err != nil {
 		sendError(err, resultChannels)
 
 		return
 	}
 
-	sendResults(results, resultChannels, p.correlateS)
-	sendError(ErrNoResult, resultChannels)
+	sendResults(results, resultChannels, p.CorrelateS)
+	sendError(p.ErrNoResult, resultChannels)
 }
 
 func separateJobs[Q, S any, K comparable](
-	request []batchRequest[Q, S],
+	request []internal.BatchRequest[Q, S],
 	correlateQ func(Q) K,
-) ([]Q, map[K]chan<- BatchResult[S]) {
+) ([]Q, map[K]chan<- types.BatchResult[S]) {
 	jobs := make([]Q, 0, len(request))
-	resultChannels := make(map[K]chan<- BatchResult[S], len(request))
+	resultChannels := make(map[K]chan<- types.BatchResult[S], len(request))
 
 	for _, job := range request {
-		jobRequest := job.request
+		jobRequest := job.Request
 		jobs = append(jobs, jobRequest)
 
 		correlationID := correlateQ(jobRequest)
-		resultChannels[correlationID] = job.resultChan
+		resultChannels[correlationID] = job.ResultChan
 	}
 
 	return jobs, resultChannels
 }
 
 type batchResult[S any] struct {
-	result S
-	err    error
+	value S
+	err   error
 }
 
 func (b batchResult[S]) Result() (S, error) {
-	return b.result, b.err
+	return b.value, b.err
 }
 
 func sendResults[S any, K comparable](
 	results []S,
-	resultChannels map[K]chan<- BatchResult[S],
+	resultChannels map[K]chan<- types.BatchResult[S],
 	correlateS func(S) K,
 ) {
 	for _, result := range results {
@@ -82,8 +83,8 @@ func sendResults[S any, K comparable](
 		resultChan, ok := resultChannels[correlationID]
 		if ok {
 			resultChan <- batchResult[S]{
-				result: result,
-				err:    nil,
+				value: result,
+				err:   nil,
 			}
 			delete(resultChannels, correlationID)
 		} else {
@@ -92,11 +93,11 @@ func sendResults[S any, K comparable](
 	}
 }
 
-func sendError[S any, K comparable](err error, resultChannels map[K]chan<- BatchResult[S]) {
+func sendError[S any, K comparable](err error, resultChannels map[K]chan<- types.BatchResult[S]) {
 	for _, resultChan := range resultChannels {
 		resultChan <- batchResult[S]{
-			result: *new(S),
-			err:    err,
+			value: *new(S),
+			err:   err,
 		}
 	}
 }

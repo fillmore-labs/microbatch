@@ -1,0 +1,17 @@
+---
+dir: "internal/mocks"
+outpkg: "mocks"
+filename: "{{.InterfaceName | snakecase}}_mock.go"
+
+quiet: true
+disable-version-string: true
+boilerplate-file: "internal/mocks/boilerplate.go.txt"
+
+packages:
+  fillmore-labs.com/microbatch/types:
+    interfaces:
+      BatchProcessor:
+  fillmore-labs.com/microbatch/internal/collector:
+    interfaces:
+      Processor:
+      TimerDelegate:
