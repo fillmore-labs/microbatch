@@ -18,7 +18,6 @@ package collector_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -81,7 +80,7 @@ func TestCollector(t *testing.T) {
 
 	processor := mocks.NewMockProcessor[int, string](t)
 	processor.EXPECT().
-		Process(mock.MatchedBy(hasRequestLen(batchSize)), mock.IsType((*sync.WaitGroup)(nil))).Run(wgDone).
+		Process(mock.MatchedBy(hasRequestLen(batchSize))).
 		Twice()
 
 	tm := make(chan time.Time)
@@ -134,12 +133,8 @@ func TestCollectorWithTimeouts(t *testing.T) {
 	const batchDuration = 1 * time.Second
 
 	processor := mocks.NewMockProcessor[int, string](t)
-	processor.EXPECT().
-		Process(mock.MatchedBy(hasRequestLen(2)), mock.IsType((*sync.WaitGroup)(nil))).Run(wgDone).
-		Twice()
-	processor.EXPECT().
-		Process(mock.MatchedBy(hasRequestLen(1)), mock.IsType((*sync.WaitGroup)(nil))).Run(wgDone).
-		Once()
+	processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(2))).Twice()
+	processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(1))).Once()
 
 	tm := make(chan time.Time)
 	d := mocks.NewMockTimerDelegate(t)
@@ -192,7 +187,7 @@ func TestCollectorWithoutSize(t *testing.T) {
 
 	processor := mocks.NewMockProcessor[int, string](t)
 	processor.EXPECT().
-		Process(mock.MatchedBy(hasRequestLen(1)), mock.IsType((*sync.WaitGroup)(nil))).Run(wgDone).
+		Process(mock.MatchedBy(hasRequestLen(1))).
 		Twice()
 
 	tm := make(chan time.Time)
@@ -240,9 +235,7 @@ func TestCollectorWithRealTimer(t *testing.T) {
 	const batchDuration = 1 * time.Nanosecond
 
 	processor := mocks.NewMockProcessor[int, string](t)
-	processor.EXPECT().
-		Process(mock.MatchedBy(hasRequestLen(1)), mock.IsType((*sync.WaitGroup)(nil))).Run(wgDone).
-		Twice()
+	processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(1))).Twice()
 
 	requests := make(chan internal.BatchRequest[int, string])
 	terminating := make(chan struct{})
@@ -277,8 +270,4 @@ func hasRequestLen(n int) func([]internal.BatchRequest[int, string]) bool {
 	return func(requests []internal.BatchRequest[int, string]) bool {
 		return len(requests) == n
 	}
-}
-
-func wgDone(_ []internal.BatchRequest[int, string], wg *sync.WaitGroup) {
-	wg.Done()
 }

@@ -42,6 +42,8 @@ var (
 	// ErrNoResult is returned when the response from [BatchProcessor] is missing a
 	// matching correlation ID.
 	ErrNoResult = errors.New("no result")
+	// ErrDuplicateID is returned when a job has an already existing correlation ID.
+	ErrDuplicateID = errors.New("duplicate correlation ID")
 )
 
 // NewBatcher creates a new [Batcher].
@@ -58,20 +60,23 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 	correlateResult func(S) K,
 	opts ...Option,
 ) *Batcher[Q, S] {
-	option := options{}
-	for _, opt := range opts {
-		opt(&option)
-	}
-
+	// Channels used for cummunicating from the Batcher to the Collector
 	requests := make(chan internal.BatchRequest[Q, S])
 	terminating := make(chan struct{})
 	terminated := make(chan struct{})
 
+	// Wrap the supplied processor
 	p := &processor.Processor[Q, S, K, QQ, SS]{
-		Processor:   batchProcessor,
-		CorrelateQ:  correlateRequest,
-		CorrelateS:  correlateResult,
-		ErrNoResult: ErrNoResult,
+		Processor:      batchProcessor,
+		CorrelateQ:     correlateRequest,
+		CorrelateS:     correlateResult,
+		ErrNoResult:    ErrNoResult,
+		ErrDuplicateID: ErrDuplicateID,
+	}
+
+	option := options{}
+	for _, opt := range opts {
+		opt(&option)
 	}
 
 	c := &collector.Collector[Q, S]{

@@ -17,7 +17,6 @@
 package collector
 
 import (
-	"sync"
 	"time"
 
 	internal "fillmore-labs.com/microbatch/internal/types"
@@ -25,9 +24,12 @@ import (
 
 // Processor defines the interface for processing batches of requests.
 type Processor[Q, S any] interface {
-	Process(requests []internal.BatchRequest[Q, S], wg *sync.WaitGroup)
+	Process(requests []internal.BatchRequest[Q, S])
 }
 
+// Collector handles batch collection and processing of requests.
+//
+// Collects requests until the batch size or duration is reached, then sends them to the Processor.
 type Collector[Q, S any] struct {
 	Requests    <-chan internal.BatchRequest[Q, S]
 	Terminating <-chan struct{}
@@ -37,30 +39,28 @@ type Collector[Q, S any] struct {
 
 	BatchSize     int
 	BatchDuration time.Duration
-	Timer         *Timer
 
+	Timer        *Timer
 	timerRunning bool
 
-	batch     []internal.BatchRequest[Q, S]
-	processes sync.WaitGroup
+	batch []internal.BatchRequest[Q, S]
 }
 
-// Run runs batch collection.
+// Run runs the main collection loop.
 func (c *Collector[Q, S]) Run() {
-	c.init()
+	c.init() // Set up
 
 CollectorLoop:
 	for {
 		select {
-		case request := <-c.Requests:
+		case request := <-c.Requests: // New request
 			c.addRequest(request)
 
-		case <-c.Timer.C:
-			// Send out batch
+		case <-c.Timer.C: // Batch timer expired
 			c.timerRunning = false
 			c.sendBatch()
 
-		case <-c.Terminating:
+		case <-c.Terminating: // Shut down
 			c.stopTimer()
 			if len(c.batch) > 0 {
 				c.sendBatch()
@@ -83,7 +83,7 @@ func (c *Collector[Q, S]) init() {
 	c.batch = c.newBatch()
 }
 
-// Add a request to the batch. If the batch is full, send it out.
+// addRequest adds the given request to the batch. If the batch is full, send it out and start new batch.
 func (c *Collector[Q, S]) addRequest(request internal.BatchRequest[Q, S]) {
 	c.batch = append(c.batch, request)
 
@@ -92,7 +92,7 @@ func (c *Collector[Q, S]) addRequest(request internal.BatchRequest[Q, S]) {
 		c.stopTimer()
 		c.sendBatch()
 
-	case 1: // Start timer if this is the first entry in the batch
+	case 1: // Start the timer if this is the first entry in the batch
 		c.startTimer()
 	}
 }
@@ -113,10 +113,9 @@ func (c *Collector[Q, S]) stopTimer() {
 	}
 }
 
-// Send out batch data.
+// Send the current batch to the processor and reset for new batch.
 func (c *Collector[Q, S]) sendBatch() {
-	c.processes.Add(1)
-	go c.Processor.Process(c.batch, &c.processes)
+	go c.Processor.Process(c.batch)
 	c.batch = c.newBatch()
 }
 

@@ -3,7 +3,16 @@ steps:
   - label: ':go: Lint'
     commands:
       - golangci-lint run --timeout 10m0s
-  - label: ':go: + :codeclimate: Test & Coverage'
+
+  - label: ':hammer: Test'
+    commands:
+      - gotestsum --junitfile test.xml ./...
+    plugins:
+      - test-collector#v1.10.0:
+          files: test.xml
+          format: junit
+
+  - label: ':codecov: + :codeclimate: Coverage'
     commands:
       - go test -race -coverprofile=cover.out ./...
       - sh .buildkite/upload_coverage.sh cover.out

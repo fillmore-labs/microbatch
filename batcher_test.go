@@ -34,7 +34,7 @@ import (
 
 const settleGoRoutines = 10 * time.Millisecond
 
-func results(iterations int) []string {
+func makeResults(iterations int) []string {
 	res := make([]string, 0, iterations)
 	for i := 0; i < iterations; i++ {
 		res = append(res, strconv.Itoa(i+1))
@@ -48,11 +48,11 @@ func TestBatcher(t *testing.T) {
 
 	// given
 	const iterations = 5
-	ret := results(iterations)
-	rand.Shuffle(iterations, reflect.Swapper(ret))
+	returned := makeResults(iterations)
+	rand.Shuffle(iterations, reflect.Swapper(returned))
 
 	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](t)
-	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(ret, nil).Once()
+	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(returned, nil).Once()
 
 	batcher := microbatch.NewBatcher(
 		batchProcessor,
@@ -64,13 +64,13 @@ func TestBatcher(t *testing.T) {
 	ctx := context.Background()
 	var wg sync.WaitGroup
 
-	result := make([]string, iterations)
+	results := make([]string, iterations)
 	for i := 0; i < iterations; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			if res, err := batcher.ExecuteJob(ctx, i+1); err == nil {
-				result[i] = res
+				results[i] = res
 			}
 		}(i)
 	}
@@ -81,6 +81,31 @@ func TestBatcher(t *testing.T) {
 	// then
 	wg.Wait()
 
-	expected := results(iterations)
-	assert.Equal(t, expected, result)
+	expected := makeResults(iterations)
+	assert.Equal(t, expected, results)
+}
+
+func TestTerminatedBatcher(t *testing.T) {
+	t.Parallel()
+
+	// given
+	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](t)
+
+	batcher := microbatch.NewBatcher(
+		batchProcessor,
+		strconv.Itoa,
+		strings.Clone,
+	)
+
+	// when
+	ctx := context.Background()
+
+	batcher.Shutdown()
+	batcher.Shutdown()
+
+	_, err := batcher.ExecuteJob(ctx, 1)
+
+	// then
+	assert.ErrorIs(t, err, microbatch.ErrBatcherTerminated)
+	batchProcessor.AssertNotCalled(t, "ProcessJobs", mock.Anything)
 }

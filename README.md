@@ -2,7 +2,8 @@
 
 [![Go Reference](https://pkg.go.dev/badge/fillmore-labs.com/microbatch.svg)](https://pkg.go.dev/fillmore-labs.com/microbatch)
 [![Build Status](https://badge.buildkite.com/1d68e28b14ecbbd4e4066e61c25f81ef08a8237615f5d03a6a.svg)](https://buildkite.com/fillmore-labs/microbatch)
-[![Test Coverage](https://api.codeclimate.com/v1/badges/2ba503a6a37cfc77951c/test_coverage)](https://codeclimate.com/github/fillmore-labs/microbatch/test_coverage)
+[![Test Coverage](https://codecov.io/gh/fillmore-labs/microbatch/graph/badge.svg?token=Sh0xNVeFCd)](https://codecov.io/gh/fillmore-labs/microbatch)
+[![Maintainability](https://api.codeclimate.com/v1/badges/2ba503a6a37cfc77951c/maintainability)](https://codeclimate.com/github/fillmore-labs/microbatch/maintainability)
 [![Go Report Card](https://goreportcard.com/badge/fillmore-labs.com/microbatch)](https://goreportcard.com/report/fillmore-labs.com/microbatch)
 [![License](https://img.shields.io/github/license/fillmore-labs/microbatch)](https://github.com/fillmore-labs/microbatch/blob/main/LICENSE)
 

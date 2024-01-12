@@ -10,3 +10,4 @@
 !/.yamlfmt
 !/.yamllint
 /bin/
+/test.xml

@@ -17,48 +17,71 @@
 package processor
 
 import (
+	"fmt"
 	"log/slog"
-	"sync"
 
 	internal "fillmore-labs.com/microbatch/internal/types"
 	"fillmore-labs.com/microbatch/types"
 )
 
+// Processor handles batch processing of jobs and results.
+//
+// This structure serves two purposes:
+//   - It is read-only after constructions and therefore thread-safe.
+//   - It isolates collector logic from correlation types.
 type Processor[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
-	Processor   types.BatchProcessor[QQ, SS]
-	CorrelateQ  func(job Q) K
-	CorrelateS  func(jobResult S) K
+	// Processor processes job batches
+	Processor types.BatchProcessor[QQ, SS]
+	// CorrelateQ maps each job to a correlation ID
+	CorrelateQ func(job Q) K
+	// CorrelateS maps each result to a correlation ID
+	CorrelateS func(jobResult S) K
+	// ErrNoResult is sent if there is no matching result for a job
 	ErrNoResult error
+	// ErrDuplicateID is sent if there is a duplicate correlation ID
+	ErrDuplicateID error
 }
 
-func (p *Processor[Q, S, K, QQ, SS]) Process(request []internal.BatchRequest[Q, S], wg *sync.WaitGroup) {
-	defer wg.Done()
-	jobs, resultChannels := separateJobs(request, p.CorrelateQ)
+// Process takes a batch of requests and handles processing.
+func (p *Processor[Q, S, K, QQ, SS]) Process(requests []internal.BatchRequest[Q, S]) {
+	// Separate jobs from result channels
+	jobs, resultChannels := p.separateJobs(requests)
 
+	// Process jobs
 	results, err := p.Processor.ProcessJobs(jobs)
-	if err != nil {
-		sendError(err, resultChannels)
+	if err != nil { // Send errors if processing failed
+		p.sendError(resultChannels, err)
 
 		return
 	}
 
-	sendResults(results, resultChannels, p.CorrelateS)
-	sendError(p.ErrNoResult, resultChannels)
+	// Send successful results
+	p.sendResults(results, resultChannels)
+	// Send errors for jobs without results
+	p.sendError(resultChannels, p.ErrNoResult)
 }
 
-func separateJobs[Q, S any, K comparable](
-	request []internal.BatchRequest[Q, S],
-	correlateQ func(Q) K,
+// separateJobs separates jobs from result channels.
+func (p *Processor[Q, S, K, QQ, SS]) separateJobs(
+	requests []internal.BatchRequest[Q, S],
 ) ([]Q, map[K]chan<- types.BatchResult[S]) {
-	jobs := make([]Q, 0, len(request))
-	resultChannels := make(map[K]chan<- types.BatchResult[S], len(request))
+	jobs := make([]Q, 0, len(requests))
+	resultChannels := make(map[K]chan<- types.BatchResult[S], len(requests))
 
-	for _, job := range request {
-		jobRequest := job.Request
+	for _, job := range requests {
+		jobRequest, resultChan := job.Request, job.ResultChan
+		correlationID := p.CorrelateQ(jobRequest)
+
+		if _, ok := resultChannels[correlationID]; ok {
+			resultChan <- batchResult[S]{
+				value: *new(S),
+				err:   fmt.Errorf("%w: %v", p.ErrDuplicateID, correlationID),
+			}
+
+			continue
+		}
 		jobs = append(jobs, jobRequest)
-
-		correlationID := correlateQ(jobRequest)
-		resultChannels[correlationID] = job.ResultChan
+		resultChannels[correlationID] = resultChan
 	}
 
 	return jobs, resultChannels
@@ -73,27 +96,30 @@ func (b batchResult[S]) Result() (S, error) {
 	return b.value, b.err
 }
 
-func sendResults[S any, K comparable](
+// sendResults sends results to matching channels.
+func (p *Processor[Q, S, K, QQ, SS]) sendResults(
 	results []S,
 	resultChannels map[K]chan<- types.BatchResult[S],
-	correlateS func(S) K,
 ) {
 	for _, result := range results {
-		correlationID := correlateS(result)
+		correlationID := p.CorrelateS(result)
 		resultChan, ok := resultChannels[correlationID]
-		if ok {
-			resultChan <- batchResult[S]{
-				value: result,
-				err:   nil,
-			}
-			delete(resultChannels, correlationID)
-		} else {
+		if !ok {
 			slog.Warn("Uncorrelated result dropped", "id", correlationID)
+
+			continue
 		}
+
+		resultChan <- batchResult[S]{
+			value: result,
+			err:   nil,
+		}
+		delete(resultChannels, correlationID)
 	}
 }
 
-func sendError[S any, K comparable](err error, resultChannels map[K]chan<- types.BatchResult[S]) {
+// sendError sends an error to all remaining result channels.
+func (*Processor[Q, S, K, QQ, SS]) sendError(resultChannels map[K]chan<- types.BatchResult[S], err error) {
 	for _, resultChan := range resultChannels {
 		resultChan <- batchResult[S]{
 			value: *new(S),

@@ -20,7 +20,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"fillmore-labs.com/microbatch/internal/mocks"
@@ -32,8 +31,9 @@ import (
 )
 
 var (
-	errNoResult = errors.New("no result")
-	errTest     = errors.New("test error")
+	errNoResult    = errors.New("no result")
+	errDuplicateID = errors.New("duplicate ID")
+	errTest        = errors.New("test error")
 )
 
 func TestProcessor(t *testing.T) {
@@ -44,10 +44,11 @@ func TestProcessor(t *testing.T) {
 	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return([]string{"2", "1", "3"}, nil).Once()
 
 	p := &processor.Processor[int, string, string, []int, []string]{
-		Processor:   batchProcessor,
-		CorrelateQ:  strconv.Itoa,
-		CorrelateS:  strings.Clone,
-		ErrNoResult: errNoResult,
+		Processor:      batchProcessor,
+		CorrelateQ:     strconv.Itoa,
+		CorrelateS:     strings.Clone,
+		ErrNoResult:    errNoResult,
+		ErrDuplicateID: errDuplicateID,
 	}
 
 	requests := make([]internal.BatchRequest[int, string], 0, 3)
@@ -58,11 +59,8 @@ func TestProcessor(t *testing.T) {
 		requests = append(requests, internal.BatchRequest[int, string]{Request: i + 1, ResultChan: result})
 	}
 
-	var wg sync.WaitGroup
-
 	// when
-	wg.Add(1)
-	go p.Process(requests, &wg)
+	go p.Process(requests)
 
 	// then
 	for i, ch := range results {
@@ -71,7 +69,6 @@ func TestProcessor(t *testing.T) {
 			assert.Equalf(t, strconv.Itoa(i+1), value, "Unexpected result for job %d", i+1)
 		}
 	}
-	wg.Wait()
 }
 
 func TestProcessorError(t *testing.T) {
@@ -82,10 +79,11 @@ func TestProcessorError(t *testing.T) {
 	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(nil, errTest).Once()
 
 	p := &processor.Processor[int, string, string, []int, []string]{
-		Processor:   batchProcessor,
-		CorrelateQ:  strconv.Itoa,
-		CorrelateS:  strings.Clone,
-		ErrNoResult: errNoResult,
+		Processor:      batchProcessor,
+		CorrelateQ:     strconv.Itoa,
+		CorrelateS:     strings.Clone,
+		ErrNoResult:    errNoResult,
+		ErrDuplicateID: errDuplicateID,
 	}
 
 	requests := make([]internal.BatchRequest[int, string], 0, 3)
@@ -96,21 +94,17 @@ func TestProcessorError(t *testing.T) {
 		requests = append(requests, internal.BatchRequest[int, string]{Request: i + 1, ResultChan: result})
 	}
 
-	var wg sync.WaitGroup
-
 	// when
-	wg.Add(1)
-	go p.Process(requests, &wg)
+	go p.Process(requests)
 
 	// then
 	for i, ch := range results {
 		_, err := (<-ch).Result()
 		assert.ErrorIsf(t, err, errTest, "failed to receive error for job %d", i+1)
 	}
-	wg.Wait()
 }
 
-func TestProcessorUncorrelated(t *testing.T) {
+func TestProcessorDuplicateUncorrelated(t *testing.T) {
 	t.Parallel()
 
 	// given
@@ -118,25 +112,25 @@ func TestProcessorUncorrelated(t *testing.T) {
 	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return([]string{"3", "4", "1"}, nil).Once()
 
 	p := &processor.Processor[int, string, string, []int, []string]{
-		Processor:   batchProcessor,
-		CorrelateQ:  strconv.Itoa,
-		CorrelateS:  strings.Clone,
-		ErrNoResult: errNoResult,
+		Processor:      batchProcessor,
+		CorrelateQ:     strconv.Itoa,
+		CorrelateS:     strings.Clone,
+		ErrNoResult:    errNoResult,
+		ErrDuplicateID: errDuplicateID,
 	}
 
-	requests := make([]internal.BatchRequest[int, string], 0, 3)
-	results := make([]<-chan types.BatchResult[string], 0, 3)
-	for i := 0; i < 3; i++ {
+	ids := []int{1, 2, 3, 2}
+
+	requests := make([]internal.BatchRequest[int, string], 0, len(ids))
+	results := make([]<-chan types.BatchResult[string], 0, len(ids))
+	for _, id := range ids {
 		result := make(chan types.BatchResult[string], 1)
+		requests = append(requests, internal.BatchRequest[int, string]{Request: id, ResultChan: result})
 		results = append(results, result)
-		requests = append(requests, internal.BatchRequest[int, string]{Request: i + 1, ResultChan: result})
 	}
-
-	var wg sync.WaitGroup
 
 	// when
-	wg.Add(1)
-	go p.Process(requests, &wg)
+	go p.Process(requests)
 
 	// then
 	for i, ch := range results {
@@ -144,11 +138,12 @@ func TestProcessorUncorrelated(t *testing.T) {
 		switch i {
 		case 1:
 			assert.ErrorIsf(t, err, errNoResult, "failed to receive error for job %d", i+1)
+		case 3:
+			assert.ErrorIsf(t, err, errDuplicateID, "failed to receive error for job %d", i+1)
 		default:
 			if assert.NoErrorf(t, err, "failed to receive result for job %d", i+1) {
 				assert.Equalf(t, strconv.Itoa(i+1), value, "Unexpected result for job %d", i+1)
 			}
 		}
 	}
-	wg.Wait()
 }

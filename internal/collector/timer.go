@@ -32,8 +32,10 @@ type TimerDelegate interface {
 
 // NewTimer creates a new timer that is not running.
 func NewTimer() *Timer {
-	t := time.NewTimer(0)
-	<-t.C
+	t := time.NewTimer(time.Hour)
+	if !t.Stop() {
+		<-t.C
+	}
 
 	return &Timer{C: t.C, Timer: t}
 }
