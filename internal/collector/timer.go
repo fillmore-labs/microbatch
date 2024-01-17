@@ -28,7 +28,7 @@ type Timer struct {
 	Delegate
 }
 
-// Interface to control a Timer.
+// Delegate is an interface to control a Timer.
 type Delegate interface {
 	Stop() bool
 	Reset(d time.Duration) bool

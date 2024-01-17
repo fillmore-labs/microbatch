@@ -60,7 +60,7 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 	correlateResult func(S) K,
 	opts ...Option,
 ) *Batcher[Q, S] {
-	// Channels used for cummunicating from the Batcher to the Collector.
+	// Channels used for communicating from the Batcher to the Collector.
 	requests := make(chan internal.BatchRequest[Q, S])
 	terminating := make(chan struct{})
 	terminated := make(chan struct{})
