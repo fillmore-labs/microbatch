@@ -14,4 +14,7 @@ packages:
   fillmore-labs.com/microbatch/internal/collector:
     interfaces:
       Processor:
-      TimerDelegate:
+      Delegate:
+        config:
+          mockname: "MockTimerDelegate"
+          filename: "timer_delegate_mock.go"

@@ -49,7 +49,7 @@ func (*RemoteProcessor) ProcessJobs(jobs []*Job) ([]*JobResult, error) {
 		return nil, fmt.Errorf("failed to marshal jobs: %w", err)
 	}
 
-	response := request // Send the jobs downstream for processing and retrieve the results
+	response := request // Send the jobs downstream for processing and retrieve the results.
 
 	var results []*JobResult
 	err = json.Unmarshal(response, &results)

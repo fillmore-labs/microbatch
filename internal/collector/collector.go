@@ -31,36 +31,44 @@ type Processor[Q, S any] interface {
 //
 // Collects requests until the batch size or duration is reached, then sends them to the Processor.
 type Collector[Q, S any] struct {
-	Requests    <-chan internal.BatchRequest[Q, S]
+	// Requests is the channel for receiving new batch requests.
+	Requests <-chan internal.BatchRequest[Q, S]
+	// Terminating is a signal for the Collector to shut down.
 	Terminating <-chan struct{}
-	Terminated  chan<- struct{}
+	// Terminated is closed after the final batch is processed on shutdown.
+	Terminated chan<- struct{}
 
+	// Processor processes batches of requests.
 	Processor Processor[Q, S]
 
-	BatchSize     int
+	// BatchSize is the maximum number of requests per batch or zero, when unlimited.
+	BatchSize int
+	// BatchDuration is the maximum time a batch can collect before processing or zero, when unlimited.
 	BatchDuration time.Duration
 
+	// Timer tracks the batch duration and signals when it expires.
 	Timer        *Timer
 	timerRunning bool
 
+	// batch holds the collected requests until processing.
 	batch []internal.BatchRequest[Q, S]
 }
 
 // Run runs the main collection loop.
 func (c *Collector[Q, S]) Run() {
-	c.init() // Set up
+	c.init()
 
 CollectorLoop:
 	for {
 		select {
-		case request := <-c.Requests: // New request
+		case request := <-c.Requests: // New request.
 			c.addRequest(request)
 
-		case <-c.Timer.C: // Batch timer expired
+		case <-c.Timer.C: // Batch timer expired.
 			c.timerRunning = false
 			c.sendBatch()
 
-		case <-c.Terminating: // Shut down
+		case <-c.Terminating: // Shut down.
 			c.stopTimer()
 			if len(c.batch) > 0 {
 				c.sendBatch()
@@ -72,6 +80,7 @@ CollectorLoop:
 	}
 }
 
+// init sets up the Collector.
 func (c *Collector[Q, S]) init() {
 	if c.Timer == nil {
 		if c.BatchDuration > 0 {
@@ -88,11 +97,11 @@ func (c *Collector[Q, S]) addRequest(request internal.BatchRequest[Q, S]) {
 	c.batch = append(c.batch, request)
 
 	switch len(c.batch) {
-	case c.BatchSize: // Batch full
+	case c.BatchSize: // Batch full.
 		c.stopTimer()
 		c.sendBatch()
 
-	case 1: // Start the timer if this is the first entry in the batch
+	case 1: // Start the timer if this is the first entry in the batch.
 		c.startTimer()
 	}
 }

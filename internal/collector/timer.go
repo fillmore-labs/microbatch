@@ -20,12 +20,16 @@ import (
 	"time"
 )
 
+// Timer delegates control, but has a similar interface as time.Timer.
 type Timer struct {
-	C     <-chan time.Time
-	Timer TimerDelegate
+	// When the Timer expires, the current time will be sent on C.
+	C <-chan time.Time
+	// Interface to control the Timer.
+	Delegate
 }
 
-type TimerDelegate interface {
+// Interface to control a Timer.
+type Delegate interface {
 	Stop() bool
 	Reset(d time.Duration) bool
 }
@@ -37,13 +41,5 @@ func NewTimer() *Timer {
 		<-t.C
 	}
 
-	return &Timer{C: t.C, Timer: t}
-}
-
-func (t *Timer) Stop() bool {
-	return t.Timer.Stop()
-}
-
-func (t *Timer) Reset(d time.Duration) bool {
-	return t.Timer.Reset(d)
+	return &Timer{C: t.C, Delegate: t}
 }

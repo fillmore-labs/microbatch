@@ -100,8 +100,8 @@ func TestCollector(t *testing.T) {
 		BatchSize:     batchSize,
 		BatchDuration: batchDuration,
 		Timer: &collector.Timer{
-			C:     tm,
-			Timer: d,
+			C:        tm,
+			Delegate: d,
 		},
 	}
 
@@ -152,8 +152,8 @@ func TestCollectorWithTimeouts(t *testing.T) {
 		Processor:     processor,
 		BatchDuration: batchDuration,
 		Timer: &collector.Timer{
-			C:     tm,
-			Timer: d,
+			C:        tm,
+			Delegate: d,
 		},
 	}
 
@@ -206,8 +206,8 @@ func TestCollectorWithoutSize(t *testing.T) {
 		Processor:     processor,
 		BatchDuration: batchDuration,
 		Timer: &collector.Timer{
-			C:     tm,
-			Timer: d,
+			C:        tm,
+			Delegate: d,
 		},
 	}
 

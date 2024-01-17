@@ -30,34 +30,34 @@ import (
 //   - It is read-only after constructions and therefore thread-safe.
 //   - It isolates collector logic from correlation types.
 type Processor[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
-	// Processor processes job batches
+	// Processor processes job batches.
 	Processor types.BatchProcessor[QQ, SS]
-	// CorrelateQ maps each job to a correlation ID
+	// CorrelateQ maps each job to a correlation ID.
 	CorrelateQ func(job Q) K
-	// CorrelateS maps each result to a correlation ID
+	// CorrelateS maps each result to a correlation ID.
 	CorrelateS func(jobResult S) K
-	// ErrNoResult is sent if there is no matching result for a job
+	// ErrNoResult is sent if there is no matching result for a job.
 	ErrNoResult error
-	// ErrDuplicateID is sent if there is a duplicate correlation ID
+	// ErrDuplicateID is sent if there is a duplicate correlation ID.
 	ErrDuplicateID error
 }
 
 // Process takes a batch of requests and handles processing.
 func (p *Processor[Q, S, K, QQ, SS]) Process(requests []internal.BatchRequest[Q, S]) {
-	// Separate jobs from result channels
+	// Separate jobs from result channels.
 	jobs, resultChannels := p.separateJobs(requests)
 
-	// Process jobs
+	// Process jobs.
 	results, err := p.Processor.ProcessJobs(jobs)
-	if err != nil { // Send errors if processing failed
+	if err != nil { // Send errors if processing failed.
 		p.sendError(resultChannels, err)
 
 		return
 	}
 
-	// Send successful results
+	// Send successful results.
 	p.sendResults(results, resultChannels)
-	// Send errors for jobs without results
+	// Send errors for jobs without results.
 	p.sendError(resultChannels, p.ErrNoResult)
 }
 

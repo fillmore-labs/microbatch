@@ -51,21 +51,21 @@ var (
 //   - batchProcessor is used to process batches of jobs.
 //   - correlateRequest and correlateResult functions are used to get a common key from a job and result for
 //     correlating results back to jobs.
-//   - options are used to configure the batch size and timeout.
+//   - opts are used to configure the batch size and timeout.
 //
-// The batch collector is run in a goroutine.
+// The batch collector is run in a goroutine which must be terminated with [Batcher.Shutdown].
 func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 	batchProcessor types.BatchProcessor[QQ, SS],
 	correlateRequest func(Q) K,
 	correlateResult func(S) K,
 	opts ...Option,
 ) *Batcher[Q, S] {
-	// Channels used for cummunicating from the Batcher to the Collector
+	// Channels used for cummunicating from the Batcher to the Collector.
 	requests := make(chan internal.BatchRequest[Q, S])
 	terminating := make(chan struct{})
 	terminated := make(chan struct{})
 
-	// Wrap the supplied processor
+	// Wrap the supplied processor.
 	p := &processor.Processor[Q, S, K, QQ, SS]{
 		Processor:      batchProcessor,
 		CorrelateQ:     correlateRequest,
