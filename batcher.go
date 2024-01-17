@@ -157,7 +157,7 @@ func (b *Batcher[Q, S]) SubmitJob(ctx context.Context, request Q) (<-chan types.
 
 // Shutdown needs to be called to reclaim resources and send the last batch.
 // No calls to [Batcher.SubmitJob] or [Batcher.ExecuteJob] after this will be accepted.
-func (b *Batcher[Q, S]) Shutdown() {
+func (b *Batcher[_, _]) Shutdown() {
 	select {
 	case b.terminating <- struct{}{}:
 		<-b.terminated

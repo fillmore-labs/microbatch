@@ -55,7 +55,7 @@ type Collector[Q, S any] struct {
 }
 
 // Run runs the main collection loop.
-func (c *Collector[Q, S]) Run() {
+func (c *Collector[_, _]) Run() {
 	c.init()
 
 CollectorLoop:
@@ -81,7 +81,7 @@ CollectorLoop:
 }
 
 // init sets up the Collector.
-func (c *Collector[Q, S]) init() {
+func (c *Collector[_, _]) init() {
 	if c.Timer == nil {
 		if c.BatchDuration > 0 {
 			c.Timer = NewTimer()
@@ -106,14 +106,14 @@ func (c *Collector[Q, S]) addRequest(request internal.BatchRequest[Q, S]) {
 	}
 }
 
-func (c *Collector[Q, S]) startTimer() {
+func (c *Collector[_, _]) startTimer() {
 	if c.BatchDuration > 0 {
 		c.Timer.Reset(c.BatchDuration)
 		c.timerRunning = true
 	}
 }
 
-func (c *Collector[Q, S]) stopTimer() {
+func (c *Collector[_, _]) stopTimer() {
 	if c.timerRunning {
 		if !c.Timer.Stop() {
 			<-c.Timer.C
@@ -123,7 +123,7 @@ func (c *Collector[Q, S]) stopTimer() {
 }
 
 // Send the current batch to the processor and reset for new batch.
-func (c *Collector[Q, S]) sendBatch() {
+func (c *Collector[_, _]) sendBatch() {
 	go c.Processor.Process(c.batch)
 	c.batch = c.newBatch()
 }
