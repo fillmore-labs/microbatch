@@ -137,7 +137,7 @@ func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
 }
 
 // SubmitJob Submits a job without waiting for the result.
-func (b *Batcher[Q, S]) SubmitJob(ctx context.Context, request Q) (<-chan types.BatchResult[S], error) {
+func (b *Batcher[Q, S]) SubmitJob(_ context.Context, request Q) (<-chan types.BatchResult[S], error) {
 	resultChan := make(chan types.BatchResult[S], 1)
 
 	select {
@@ -149,9 +149,6 @@ func (b *Batcher[Q, S]) SubmitJob(ctx context.Context, request Q) (<-chan types.
 
 	case <-b.terminated:
 		return nil, ErrBatcherTerminated
-
-	case <-ctx.Done():
-		return nil, fmt.Errorf("job canceled: %w", ctx.Err())
 	}
 }
 

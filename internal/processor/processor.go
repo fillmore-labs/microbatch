@@ -73,8 +73,8 @@ func (p *Processor[Q, S, K, QQ, _]) separateJobs(
 
 	for _, job := range requests {
 		jobRequest, resultChan := job.Request, job.ResultChan
-		correlationID := p.CorrelateQ(jobRequest)
 
+		correlationID := p.CorrelateQ(jobRequest)
 		if _, ok := resultChannels[correlationID]; ok {
 			resultChan <- batchResult[S]{
 				err: fmt.Errorf("%w: %v", p.ErrDuplicateID, correlationID),
@@ -82,6 +82,7 @@ func (p *Processor[Q, S, K, QQ, _]) separateJobs(
 
 			continue
 		}
+
 		jobs = append(jobs, jobRequest)
 		resultChannels[correlationID] = resultChan
 	}

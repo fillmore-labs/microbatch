@@ -19,15 +19,14 @@ package processor_test
 import (
 	"errors"
 	"strconv"
-	"strings"
 	"testing"
 
 	"fillmore-labs.com/microbatch/internal/mocks"
 	"fillmore-labs.com/microbatch/internal/processor"
 	internal "fillmore-labs.com/microbatch/internal/types"
 	"fillmore-labs.com/microbatch/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -36,91 +35,102 @@ var (
 	errTest        = errors.New("test error")
 )
 
-func TestProcessor(t *testing.T) {
+func correlateRequest(q int) string {
+	return strconv.Itoa(q)
+}
+
+func correlateResult(s string) string {
+	return s
+}
+
+type ProcessorTestSuite struct {
+	suite.Suite
+	BatchProcessor *mocks.MockBatchProcessor[[]int, []string]
+	Processor      *processor.Processor[int, string, string, []int, []string]
+}
+
+func TestProcessorTestSuite(t *testing.T) {
 	t.Parallel()
+	suite.Run(t, new(ProcessorTestSuite))
+}
 
-	// given
-	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](t)
-	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return([]string{"2", "1", "3"}, nil).Once()
-
-	p := &processor.Processor[int, string, string, []int, []string]{
-		Processor:      batchProcessor,
-		CorrelateQ:     strconv.Itoa,
-		CorrelateS:     strings.Clone,
+func (s *ProcessorTestSuite) SetupTest() {
+	s.BatchProcessor = mocks.NewMockBatchProcessor[[]int, []string](s.T())
+	s.Processor = &processor.Processor[int, string, string, []int, []string]{
+		Processor:      s.BatchProcessor,
+		CorrelateQ:     correlateRequest,
+		CorrelateS:     correlateResult,
 		ErrNoResult:    errNoResult,
 		ErrDuplicateID: errDuplicateID,
 	}
+}
 
-	requests := make([]internal.BatchRequest[int, string], 0, 3)
-	results := make([]<-chan types.BatchResult[string], 0, 3)
-	for i := 0; i < 3; i++ {
-		result := make(chan types.BatchResult[string], 1)
-		results = append(results, result)
-		requests = append(requests, internal.BatchRequest[int, string]{Request: i + 1, ResultChan: result})
-	}
+func (s *ProcessorTestSuite) TestProcessor() {
+	// given
+	ids := []int{1, 2, 3}
+	reply := []string{"2", "1", "3"}
+
+	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(reply, nil).Once()
+	requests, results := makeRequestsResults(ids)
 
 	// when
-	go p.Process(requests)
+	s.Processor.Process(requests)
 
 	// then
 	for i, ch := range results {
 		value, err := (<-ch).Result()
-		if assert.NoErrorf(t, err, "failed to receive result for job %d", i+1) {
-			assert.Equalf(t, strconv.Itoa(i+1), value, "Unexpected result for job %d", i+1)
+		if s.NoErrorf(err, "failed to receive result for job %d", i+1) {
+			s.Equalf(correlateRequest(i+1), value, "Unexpected result for job %d", i+1)
 		}
 	}
 }
 
-func TestProcessorError(t *testing.T) {
-	t.Parallel()
-
+func (s *ProcessorTestSuite) TestProcessorError() {
 	// given
-	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](t)
-	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(nil, errTest).Once()
+	ids := []int{1, 2, 3}
+	reply := errTest
 
-	p := &processor.Processor[int, string, string, []int, []string]{
-		Processor:      batchProcessor,
-		CorrelateQ:     strconv.Itoa,
-		CorrelateS:     strings.Clone,
-		ErrNoResult:    errNoResult,
-		ErrDuplicateID: errDuplicateID,
-	}
-
-	requests := make([]internal.BatchRequest[int, string], 0, 3)
-	results := make([]<-chan types.BatchResult[string], 0, 3)
-	for i := 0; i < 3; i++ {
-		result := make(chan types.BatchResult[string], 1)
-		results = append(results, result)
-		requests = append(requests, internal.BatchRequest[int, string]{Request: i + 1, ResultChan: result})
-	}
+	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(nil, reply).Once()
+	requests, results := makeRequestsResults(ids)
 
 	// when
-	go p.Process(requests)
+	s.Processor.Process(requests)
 
 	// then
 	for i, ch := range results {
 		_, err := (<-ch).Result()
-		assert.ErrorIsf(t, err, errTest, "failed to receive error for job %d", i+1)
+		s.ErrorIsf(err, errTest, "failed to receive error for job %d", i+1)
 	}
 }
 
-func TestProcessorDuplicateUncorrelated(t *testing.T) {
-	t.Parallel()
-
+func (s *ProcessorTestSuite) TestProcessorDuplicateUncorrelated() {
 	// given
-	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](t)
-	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return([]string{"3", "4", "1"}, nil).Once()
-
-	p := &processor.Processor[int, string, string, []int, []string]{
-		Processor:      batchProcessor,
-		CorrelateQ:     strconv.Itoa,
-		CorrelateS:     strings.Clone,
-		ErrNoResult:    errNoResult,
-		ErrDuplicateID: errDuplicateID,
-	}
-
 	ids := []int{1, 2, 3, 2}
+	reply := []string{"3", "4", "1"}
 
+	requests, results := makeRequestsResults(ids)
+	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(reply, nil).Once()
+
+	// when
+	s.Processor.Process(requests)
+
+	// then
+	for i, ch := range results {
+		value, err := (<-ch).Result()
+		switch i {
+		case 1:
+			s.ErrorIsf(err, errNoResult, "failed to receive error for job %d", i+1)
+		case 3:
+			s.ErrorIsf(err, errDuplicateID, "failed to receive error for job %d", i+1)
+		default:
+			if s.NoErrorf(err, "failed to receive result for job %d", i+1) {
+				s.Equalf(correlateRequest(i+1), value, "Unexpected result for job %d", i+1)
+			}
+		}
+	}
+}
+
+func makeRequestsResults(ids []int) ([]internal.BatchRequest[int, string], []<-chan types.BatchResult[string]) {
 	requests := make([]internal.BatchRequest[int, string], 0, len(ids))
 	results := make([]<-chan types.BatchResult[string], 0, len(ids))
 	for _, id := range ids {
@@ -129,21 +139,5 @@ func TestProcessorDuplicateUncorrelated(t *testing.T) {
 		results = append(results, result)
 	}
 
-	// when
-	go p.Process(requests)
-
-	// then
-	for i, ch := range results {
-		value, err := (<-ch).Result()
-		switch i {
-		case 1:
-			assert.ErrorIsf(t, err, errNoResult, "failed to receive error for job %d", i+1)
-		case 3:
-			assert.ErrorIsf(t, err, errDuplicateID, "failed to receive error for job %d", i+1)
-		default:
-			if assert.NoErrorf(t, err, "failed to receive result for job %d", i+1) {
-				assert.Equalf(t, strconv.Itoa(i+1), value, "Unexpected result for job %d", i+1)
-			}
-		}
-	}
+	return requests, results
 }

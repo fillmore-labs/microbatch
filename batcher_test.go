@@ -21,44 +21,54 @@ import (
 	"math/rand"
 	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"fillmore-labs.com/microbatch"
 	"fillmore-labs.com/microbatch/internal/mocks"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 )
+
+type BatcherTestSuite struct {
+	suite.Suite
+	BatchProcessor *mocks.MockBatchProcessor[[]int, []string]
+	Batcher        *microbatch.Batcher[int, string]
+}
+
+func TestBatcherTestSuite(t *testing.T) {
+	t.Parallel()
+	suite.Run(t, new(BatcherTestSuite))
+}
+
+func (s *BatcherTestSuite) SetupTest() {
+	s.BatchProcessor = mocks.NewMockBatchProcessor[[]int, []string](s.T())
+
+	s.Batcher = microbatch.NewBatcher(
+		s.BatchProcessor,
+		correlateRequest,
+		correlateResult,
+	)
+}
+
+func correlateRequest(q int) string {
+	return strconv.Itoa(q)
+}
+
+func correlateResult(s string) string {
+	return s
+}
 
 const settleGoRoutines = 10 * time.Millisecond
 
-func makeResults(iterations int) []string {
-	res := make([]string, 0, iterations)
-	for i := 0; i < iterations; i++ {
-		res = append(res, strconv.Itoa(i+1))
-	}
-
-	return res
-}
-
-func TestBatcher(t *testing.T) {
-	t.Parallel()
-
+func (s *BatcherTestSuite) TestBatcher() {
 	// given
 	const iterations = 5
 	returned := makeResults(iterations)
 	rand.Shuffle(iterations, reflect.Swapper(returned))
 
-	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](t)
-	batchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(returned, nil).Once()
-
-	batcher := microbatch.NewBatcher(
-		batchProcessor,
-		strconv.Itoa,
-		strings.Clone,
-	)
+	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(returned, nil).Once()
 
 	// when
 	ctx := context.Background()
@@ -69,43 +79,74 @@ func TestBatcher(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if res, err := batcher.ExecuteJob(ctx, i+1); err == nil {
+			if res, err := s.Batcher.ExecuteJob(ctx, i+1); err == nil {
 				results[i] = res
 			}
 		}(i)
 	}
 
 	time.Sleep(settleGoRoutines)
-	batcher.Shutdown()
+	s.Batcher.Shutdown()
 
 	// then
 	wg.Wait()
 
 	expected := makeResults(iterations)
-	assert.Equal(t, expected, results)
+	s.Equal(expected, results)
 }
 
-func TestTerminatedBatcher(t *testing.T) {
-	t.Parallel()
+func makeResults(iterations int) []string {
+	res := make([]string, 0, iterations)
+	for i := 0; i < iterations; i++ {
+		res = append(res, strconv.Itoa(i+1))
+	}
 
+	return res
+}
+
+func (s *BatcherTestSuite) TestTerminatedBatcher() {
 	// given
-	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](t)
-
-	batcher := microbatch.NewBatcher(
-		batchProcessor,
-		strconv.Itoa,
-		strings.Clone,
-	)
+	s.Batcher.Shutdown()
+	s.Batcher.Shutdown()
 
 	// when
 	ctx := context.Background()
-
-	batcher.Shutdown()
-	batcher.Shutdown()
-
-	_, err := batcher.ExecuteJob(ctx, 1)
+	_, err := s.Batcher.ExecuteJob(ctx, 1)
 
 	// then
-	assert.ErrorIs(t, err, microbatch.ErrBatcherTerminated)
-	batchProcessor.AssertNotCalled(t, "ProcessJobs", mock.Anything)
+	s.ErrorIs(err, microbatch.ErrBatcherTerminated)
+	s.BatchProcessor.AssertNotCalled(s.T(), "ProcessJobs", mock.Anything)
+}
+
+func (s *BatcherTestSuite) TestCancellation() {
+	// given
+	const iterations = 5
+
+	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return([]string{}, nil).Maybe()
+
+	// when
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	results := make([]error, iterations)
+	for i := 0; i < iterations; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := s.Batcher.ExecuteJob(ctx, i+1)
+			results[i] = err
+		}(i)
+	}
+
+	cancel()
+	time.Sleep(settleGoRoutines)
+
+	s.Batcher.Shutdown()
+
+	// then
+	wg.Wait()
+
+	for _, err := range results {
+		s.ErrorIs(err, context.Canceled)
+	}
 }

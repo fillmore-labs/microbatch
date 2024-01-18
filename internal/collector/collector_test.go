@@ -25,36 +25,69 @@ import (
 	"fillmore-labs.com/microbatch/internal/mocks"
 	internal "fillmore-labs.com/microbatch/internal/types"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
 )
 
 const settleGoRoutines = 10 * time.Millisecond
 
-func TestCollectorTerminates(t *testing.T) {
-	t.Parallel()
+type CollectorTestSuite struct {
+	suite.Suite
+	Processor   *mocks.MockProcessor[int, string]
+	Requests    chan<- internal.BatchRequest[int, string]
+	Terminating chan<- struct{}
+	Terminated  <-chan struct{}
+	Collector   *collector.Collector[int, string]
 
-	// given
-	processor := mocks.NewMockProcessor[int, string](t)
+	C             chan<- time.Time
+	TimerDelegate *mocks.MockTimerDelegate
+}
+
+func TestCollectorTestSuite(t *testing.T) {
+	t.Parallel()
+	suite.Run(t, new(CollectorTestSuite))
+}
+
+func (s *CollectorTestSuite) SetupTest() {
+	processor := mocks.NewMockProcessor[int, string](s.T())
 
 	requests := make(chan internal.BatchRequest[int, string])
 	terminating := make(chan struct{})
 	terminated := make(chan struct{})
 
-	c := collector.Collector[int, string]{
+	s.Processor = processor
+	s.Requests = requests
+	s.Terminating = terminating
+	s.Terminated = terminated
+
+	tm := make(chan time.Time)
+	d := mocks.NewMockTimerDelegate(s.T())
+
+	s.C = tm
+	s.TimerDelegate = d
+
+	s.Collector = &collector.Collector[int, string]{
 		Requests:    requests,
 		Terminating: terminating,
 		Terminated:  terminated,
 		Processor:   processor,
+		Timer:       &collector.Timer{C: tm, Delegate: d},
 	}
+}
+
+func (s *CollectorTestSuite) TestCollectorTerminates() {
+	// given
+	s.Collector.Timer = nil
 
 	batcherDone := make(chan struct{})
+
+	// when
 	go func() {
-		c.Run()
+		s.Collector.Run()
 		close(batcherDone)
 	}()
 
-	// when
-	terminating <- struct{}{}
-	<-terminated
+	s.Terminating <- struct{}{}
+	<-s.Terminated
 
 	// then
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
@@ -62,204 +95,127 @@ func TestCollectorTerminates(t *testing.T) {
 
 	select {
 	case <-batcherDone:
-		t.Log("Collector shut down")
 
 	case <-ctx.Done():
-		t.Error("Collector did not shut down")
+		s.Fail("Collector did not shut down")
 	}
 
-	processor.AssertNotCalled(t, "Process", mock.Anything)
+	s.Processor.AssertNotCalled(s.T(), "Process", mock.Anything)
 }
 
-func TestCollector(t *testing.T) {
-	t.Parallel()
-
+func (s *CollectorTestSuite) TestCollector() {
 	// given
 	const batchSize = 5
 	const batchDuration = 1 * time.Second
 
-	processor := mocks.NewMockProcessor[int, string](t)
-	processor.EXPECT().
-		Process(mock.MatchedBy(hasRequestLen(batchSize))).
-		Twice()
+	s.Processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(batchSize))).Twice()
 
-	tm := make(chan time.Time)
-	d := mocks.NewMockTimerDelegate(t)
-	d.EXPECT().Reset(batchDuration).Return(false).Twice()
-	d.EXPECT().Stop().Return(false).Twice()
+	s.TimerDelegate.EXPECT().Reset(batchDuration).Return(false).Twice()
+	s.TimerDelegate.EXPECT().Stop().Return(false).Twice()
 
-	requests := make(chan internal.BatchRequest[int, string])
-	terminating := make(chan struct{})
-	terminated := make(chan struct{})
-
-	c := collector.Collector[int, string]{
-		Requests:      requests,
-		Terminating:   terminating,
-		Terminated:    terminated,
-		Processor:     processor,
-		BatchSize:     batchSize,
-		BatchDuration: batchDuration,
-		Timer: &collector.Timer{
-			C:        tm,
-			Delegate: d,
-		},
-	}
-
-	go c.Run()
+	s.Collector.BatchSize = batchSize
+	s.Collector.BatchDuration = batchDuration
 
 	// when
-	for i := 0; i < batchSize; i++ {
-		requests <- internal.BatchRequest[int, string]{Request: i + 1}
-	}
-	tm <- time.Time{}
+	go s.Collector.Run()
 
-	for i := batchSize; i < 2*batchSize; i++ {
-		requests <- internal.BatchRequest[int, string]{Request: i + 1}
+	for i := 0; i < 2*batchSize; i++ {
+		s.Requests <- internal.BatchRequest[int, string]{Request: i + 1}
+		switch i {
+		case batchSize - 1, 2*batchSize - 1:
+			s.C <- time.Time{}
+		}
 	}
-	tm <- time.Time{}
 
-	terminating <- struct{}{}
-	<-terminated
+	s.Terminating <- struct{}{}
+	<-s.Terminated
 
 	// then
 	time.Sleep(settleGoRoutines)
 	// assert expectations
 }
 
-func TestCollectorWithTimeouts(t *testing.T) {
-	t.Parallel()
-
+func (s *CollectorTestSuite) TestCollectorWithTimeouts() {
 	// given
 	const batchDuration = 1 * time.Second
 
-	processor := mocks.NewMockProcessor[int, string](t)
-	processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(2))).Twice()
-	processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(1))).Once()
+	s.Processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(2))).Twice()
+	s.Processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(1))).Once()
 
-	tm := make(chan time.Time)
-	d := mocks.NewMockTimerDelegate(t)
-	d.EXPECT().Reset(batchDuration).Return(false).Times(3)
-	d.EXPECT().Stop().Return(true).Once()
+	s.TimerDelegate.EXPECT().Reset(batchDuration).Return(false).Times(3)
+	s.TimerDelegate.EXPECT().Stop().Return(true).Once()
 
-	requests := make(chan internal.BatchRequest[int, string])
-	terminating := make(chan struct{})
-	terminated := make(chan struct{})
-
-	c := collector.Collector[int, string]{
-		Requests:      requests,
-		Terminating:   terminating,
-		Terminated:    terminated,
-		Processor:     processor,
-		BatchDuration: batchDuration,
-		Timer: &collector.Timer{
-			C:        tm,
-			Delegate: d,
-		},
-	}
-
-	go c.Run()
+	s.Collector.BatchDuration = batchDuration
 
 	// when
-	for i := 0; i < 2; i++ {
-		requests <- internal.BatchRequest[int, string]{Request: i + 1}
+	go s.Collector.Run()
+
+	for i := 0; i < 5; i++ {
+		s.Requests <- internal.BatchRequest[int, string]{Request: i + 1}
+		switch i {
+		case 1, 3:
+			s.C <- time.Time{}
+		}
 	}
-	tm <- time.Time{}
-	for i := 2; i < 4; i++ {
-		requests <- internal.BatchRequest[int, string]{Request: i + 1}
-	}
-	tm <- time.Time{}
-	for i := 4; i < 5; i++ {
-		requests <- internal.BatchRequest[int, string]{Request: i + 1}
-	}
-	terminating <- struct{}{}
-	<-terminated
+
+	s.Terminating <- struct{}{}
+	<-s.Terminated
 
 	// then
 	time.Sleep(settleGoRoutines)
 	// assert expectations
 }
 
-func TestCollectorWithoutSize(t *testing.T) {
-	t.Parallel()
-
+func (s *CollectorTestSuite) TestCollectorWithoutSize() {
 	// given
 	const batchDuration = 1 * time.Second
 
-	processor := mocks.NewMockProcessor[int, string](t)
-	processor.EXPECT().
+	s.Processor.EXPECT().
 		Process(mock.MatchedBy(hasRequestLen(1))).
 		Twice()
 
-	tm := make(chan time.Time)
-	d := mocks.NewMockTimerDelegate(t)
-	d.EXPECT().Reset(batchDuration).Return(true).Twice()
-	d.EXPECT().Stop().Return(true).Once()
+	s.TimerDelegate.EXPECT().Reset(batchDuration).Return(true).Twice()
+	s.TimerDelegate.EXPECT().Stop().Return(true).Once()
 
-	requests := make(chan internal.BatchRequest[int, string])
-	terminating := make(chan struct{})
-	terminated := make(chan struct{})
-
-	c := collector.Collector[int, string]{
-		Requests:      requests,
-		Terminating:   terminating,
-		Terminated:    terminated,
-		Processor:     processor,
-		BatchDuration: batchDuration,
-		Timer: &collector.Timer{
-			C:        tm,
-			Delegate: d,
-		},
-	}
-
-	go c.Run()
+	s.Collector.BatchDuration = batchDuration
 
 	// when
-	requests <- internal.BatchRequest[int, string]{Request: 1}
+	go s.Collector.Run()
 
-	tm <- time.Time{}
+	s.Requests <- internal.BatchRequest[int, string]{Request: 1}
 
-	requests <- internal.BatchRequest[int, string]{Request: 2}
+	s.C <- time.Time{}
 
-	terminating <- struct{}{}
-	<-terminated
+	s.Requests <- internal.BatchRequest[int, string]{Request: 2}
+
+	s.Terminating <- struct{}{}
+	<-s.Terminated
 
 	// then
 	time.Sleep(settleGoRoutines)
 	// assert expectations
 }
 
-func TestCollectorWithRealTimer(t *testing.T) {
-	t.Parallel()
-
+func (s *CollectorTestSuite) TestCollectorWithRealTimer() {
 	// given
 	const batchDuration = 1 * time.Nanosecond
 
-	processor := mocks.NewMockProcessor[int, string](t)
-	processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(1))).Twice()
+	s.Processor.EXPECT().Process(mock.MatchedBy(hasRequestLen(1))).Twice()
 
-	requests := make(chan internal.BatchRequest[int, string])
-	terminating := make(chan struct{})
-	terminated := make(chan struct{})
-
-	c := collector.Collector[int, string]{
-		Requests:      requests,
-		Terminating:   terminating,
-		Terminated:    terminated,
-		Processor:     processor,
-		BatchDuration: batchDuration,
-	}
-
-	go c.Run()
+	s.Collector.BatchDuration = batchDuration
+	s.Collector.Timer = nil
 
 	// when
-	requests <- internal.BatchRequest[int, string]{Request: 1}
+	go s.Collector.Run()
+
+	s.Requests <- internal.BatchRequest[int, string]{Request: 1}
 
 	time.Sleep(10 * time.Microsecond)
 
-	requests <- internal.BatchRequest[int, string]{Request: 2}
+	s.Requests <- internal.BatchRequest[int, string]{Request: 2}
 
-	terminating <- struct{}{}
-	<-terminated
+	s.Terminating <- struct{}{}
+	<-s.Terminated
 
 	// then
 	time.Sleep(settleGoRoutines)

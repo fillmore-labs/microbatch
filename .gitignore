@@ -10,4 +10,5 @@
 !/.yamlfmt
 !/.yamllint
 /bin/
+/cover.out
 /test.xml
