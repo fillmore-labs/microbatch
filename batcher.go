@@ -84,8 +84,8 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 		Terminating:   terminating,
 		Terminated:    terminated,
 		Processor:     p,
-		BatchSize:     option.Size,
-		BatchDuration: option.Timeout,
+		BatchSize:     option.size,
+		BatchDuration: option.timeout,
 	}
 
 	go c.Run()
@@ -97,27 +97,27 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 	}
 }
 
-// Option defines configurable parameters for [NewBatcher].
+// options defines configurable parameters for the batcher.
+type options struct {
+	size    int
+	timeout time.Duration
+}
+
+// Option defines configurations for [NewBatcher].
 type Option func(*options)
 
 // WithSize is an option to configure the batch size.
 func WithSize(size int) Option {
 	return func(o *options) {
-		o.Size = size
+		o.size = size
 	}
 }
 
 // WithTimeout is an option to configure the batch timeout.
 func WithTimeout(timeout time.Duration) Option {
 	return func(o *options) {
-		o.Timeout = timeout
+		o.timeout = timeout
 	}
-}
-
-// options defines configurable parameters for the batcher.
-type options struct {
-	Size    int
-	Timeout time.Duration
 }
 
 // ExecuteJob submits a job and waits for the result.
@@ -138,18 +138,20 @@ func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
 
 // SubmitJob Submits a job without waiting for the result.
 func (b *Batcher[Q, S]) SubmitJob(_ context.Context, request Q) (<-chan types.BatchResult[S], error) {
-	resultChan := make(chan types.BatchResult[S], 1)
-
-	select {
-	case b.requests <- internal.BatchRequest[Q, S]{
+	resultChan := processor.NewResultChannel[S]()
+	batchRequest := internal.BatchRequest[Q, S]{
 		Request:    request,
 		ResultChan: resultChan,
-	}:
-		return resultChan, nil
+	}
 
+	select {
 	case <-b.terminated:
 		return nil, ErrBatcherTerminated
+
+	case b.requests <- batchRequest:
 	}
+
+	return resultChan, nil
 }
 
 // Shutdown needs to be called to reclaim resources and send the last batch.
@@ -158,6 +160,7 @@ func (b *Batcher[_, _]) Shutdown() {
 	select {
 	case b.terminating <- struct{}{}:
 		<-b.terminated
+
 	case <-b.terminated:
 	}
 }

@@ -69,7 +69,6 @@ CollectorLoop:
 			c.sendBatch()
 
 		case <-c.Terminating: // Shut down.
-			c.stopTimer()
 			if len(c.batch) > 0 {
 				c.sendBatch()
 			}
@@ -89,7 +88,7 @@ func (c *Collector[_, _]) init() {
 			c.Timer = &Timer{}
 		}
 	}
-	c.batch = c.newBatch()
+	c.newBatch()
 }
 
 // addRequest adds the given request to the batch. If the batch is full, send it out and start new batch.
@@ -98,7 +97,6 @@ func (c *Collector[Q, S]) addRequest(request internal.BatchRequest[Q, S]) {
 
 	switch len(c.batch) {
 	case c.BatchSize: // Batch full.
-		c.stopTimer()
 		c.sendBatch()
 
 	case 1: // Start the timer if this is the first entry in the batch.
@@ -106,6 +104,7 @@ func (c *Collector[Q, S]) addRequest(request internal.BatchRequest[Q, S]) {
 	}
 }
 
+// startTimer starts the timer if a maximum collection time is configured.
 func (c *Collector[_, _]) startTimer() {
 	if c.BatchDuration > 0 {
 		c.Timer.Reset(c.BatchDuration)
@@ -113,6 +112,7 @@ func (c *Collector[_, _]) startTimer() {
 	}
 }
 
+// stopTimer stops the batch timer if it is running.
 func (c *Collector[_, _]) stopTimer() {
 	if c.timerRunning {
 		if !c.Timer.Stop() {
@@ -124,14 +124,17 @@ func (c *Collector[_, _]) stopTimer() {
 
 // Send the current batch to the processor and reset for new batch.
 func (c *Collector[_, _]) sendBatch() {
-	go c.Processor.Process(c.batch)
-	c.batch = c.newBatch()
+	c.stopTimer()
+	go c.Processor.Process(c.batch) // hand over ownership of the batch to the processor.
+	c.newBatch()
 }
 
-func (c *Collector[Q, S]) newBatch() []internal.BatchRequest[Q, S] {
+func (c *Collector[Q, S]) newBatch() {
 	if c.BatchSize > 0 {
-		return make([]internal.BatchRequest[Q, S], 0, c.BatchSize)
+		c.batch = make([]internal.BatchRequest[Q, S], 0, c.BatchSize)
+
+		return
 	}
 
-	return nil
+	c.batch = nil
 }

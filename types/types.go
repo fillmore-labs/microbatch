@@ -17,6 +17,8 @@
 package types
 
 // BatchProcessor is the interface your batch processor needs to implement.
+//
+// It must be safe to be called from multiple goroutines simultaneously.
 type BatchProcessor[QQ, SS any] interface {
 	ProcessJobs(jobs QQ) (SS, error)
 }

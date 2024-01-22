@@ -29,6 +29,7 @@ import (
 	"fillmore-labs.com/microbatch/internal/mocks"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/sync/errgroup"
 )
 
 type BatcherTestSuite struct {
@@ -72,24 +73,27 @@ func (s *BatcherTestSuite) TestBatcher() {
 
 	// when
 	ctx := context.Background()
-	var wg sync.WaitGroup
+	var g errgroup.Group
 
 	results := make([]string, iterations)
 	for i := 0; i < iterations; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			if res, err := s.Batcher.ExecuteJob(ctx, i+1); err == nil {
+		i := i
+		g.Go(func() error {
+			res, err := s.Batcher.ExecuteJob(ctx, i+1)
+			if err == nil {
 				results[i] = res
 			}
-		}(i)
+
+			return err
+		})
 	}
 
 	time.Sleep(settleGoRoutines)
 	s.Batcher.Shutdown()
 
 	// then
-	wg.Wait()
+	err := g.Wait()
+	s.NoErrorf(err, "Unexpected error executing jobs")
 
 	expected := makeResults(iterations)
 	s.Equal(expected, results)
@@ -146,7 +150,7 @@ func (s *BatcherTestSuite) TestCancellation() {
 	// then
 	wg.Wait()
 
-	for _, err := range results {
-		s.ErrorIs(err, context.Canceled)
+	for i, err := range results {
+		s.ErrorIsf(err, context.Canceled, "Unexpected result for job %d", i+1)
 	}
 }

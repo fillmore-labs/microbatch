@@ -27,7 +27,7 @@ import (
 // Processor handles batch processing of jobs and results.
 //
 // This structure serves two purposes:
-//   - It is read-only after constructions and therefore thread-safe.
+//   - It is read-only after construction and therefore thread-safe.
 //   - It isolates collector logic from correlation types.
 type Processor[Q, S any, K comparable, QQ ~[]Q, SS ~[]S] struct {
 	// Processor processes job batches.
@@ -90,11 +90,21 @@ func (p *Processor[Q, S, K, QQ, _]) separateJobs(
 	return jobs, resultChannels
 }
 
+// NewResultChannel creates a new result channel.
+//
+// This function is here because processor logic implicitly depends on a buffered channel to allow for sending results
+// without blocking.
+func NewResultChannel[S any]() chan types.BatchResult[S] {
+	return make(chan types.BatchResult[S], 1)
+}
+
+// batchResult is a result for a request send to the result channel.
 type batchResult[S any] struct {
 	value S
 	err   error
 }
 
+// Result implements [types.BatchResult].
 func (b batchResult[S]) Result() (S, error) {
 	return b.value, b.err
 }
@@ -113,8 +123,9 @@ func (p *Processor[_, S, K, _, SS]) sendResults(
 			continue
 		}
 
-		resultChan <- batchResult[S]{value: result}
 		delete(resultChannels, correlationID)
+		resultChan <- batchResult[S]{value: result}
+		close(resultChan)
 	}
 }
 
@@ -122,5 +133,6 @@ func (p *Processor[_, S, K, _, SS]) sendResults(
 func (*Processor[_, S, K, _, _]) sendError(resultChannels resultChanMap[S, K], err error) {
 	for _, resultChan := range resultChannels {
 		resultChan <- batchResult[S]{err: err}
+		close(resultChan)
 	}
 }
