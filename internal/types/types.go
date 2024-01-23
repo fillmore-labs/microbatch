@@ -21,7 +21,7 @@ import (
 )
 
 // BatchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
-type BatchRequest[Q, S any] struct {
+type BatchRequest[Q, R any] struct {
 	Request    Q
-	ResultChan chan<- types.BatchResult[S]
+	ResultChan chan<- types.BatchResult[R]
 }

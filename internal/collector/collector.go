@@ -23,23 +23,23 @@ import (
 )
 
 // Processor defines the interface for processing batches of requests.
-type Processor[Q, S any] interface {
-	Process(requests []internal.BatchRequest[Q, S])
+type Processor[Q, R any] interface {
+	Process(requests []internal.BatchRequest[Q, R])
 }
 
 // Collector handles batch collection and processing of requests.
 //
 // Collects requests until the batch size or duration is reached, then sends them to the Processor.
-type Collector[Q, S any] struct {
+type Collector[Q, R any] struct {
 	// Requests is the channel for receiving new batch requests.
-	Requests <-chan internal.BatchRequest[Q, S]
+	Requests <-chan internal.BatchRequest[Q, R]
 	// Terminating is a signal for the Collector to shut down.
 	Terminating <-chan struct{}
 	// Terminated is closed after the final batch is processed on shutdown.
 	Terminated chan<- struct{}
 
 	// Processor processes batches of requests.
-	Processor Processor[Q, S]
+	Processor Processor[Q, R]
 
 	// BatchSize is the maximum number of requests per batch or zero, when unlimited.
 	BatchSize int
@@ -51,7 +51,7 @@ type Collector[Q, S any] struct {
 	timerRunning bool
 
 	// batch holds the collected requests until processing.
-	batch []internal.BatchRequest[Q, S]
+	batch []internal.BatchRequest[Q, R]
 }
 
 // Run runs the main collection loop.
@@ -92,7 +92,7 @@ func (c *Collector[_, _]) init() {
 }
 
 // addRequest adds the given request to the batch. If the batch is full, send it out and start new batch.
-func (c *Collector[Q, S]) addRequest(request internal.BatchRequest[Q, S]) {
+func (c *Collector[Q, R]) addRequest(request internal.BatchRequest[Q, R]) {
 	c.batch = append(c.batch, request)
 
 	switch len(c.batch) {
@@ -129,9 +129,9 @@ func (c *Collector[_, _]) sendBatch() {
 	c.newBatch()
 }
 
-func (c *Collector[Q, S]) newBatch() {
+func (c *Collector[Q, R]) newBatch() {
 	if c.BatchSize > 0 {
-		c.batch = make([]internal.BatchRequest[Q, S], 0, c.BatchSize)
+		c.batch = make([]internal.BatchRequest[Q, R], 0, c.BatchSize)
 
 		return
 	}

@@ -77,7 +77,7 @@ func Example_executeJob() {
 	opts := []microbatch.Option{microbatch.WithSize(3), microbatch.WithTimeout(10 * time.Millisecond)}
 	batcher := microbatch.NewBatcher(
 		processor,
-		func(j *Job) JobID { return j.ID },
+		func(q *Job) JobID { return q.ID },
 		func(r *JobResult) JobID { return r.ID },
 		opts...,
 	)
@@ -115,7 +115,7 @@ func Example_submitJob() {
 	processor := &RemoteProcessor{}
 	batcher := microbatch.NewBatcher(
 		processor,
-		func(j *Job) JobID { return j.ID },
+		func(q *Job) JobID { return q.ID },
 		func(r *JobResult) JobID { return r.ID },
 		microbatch.WithSize(3),
 	)

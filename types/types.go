@@ -19,11 +19,11 @@ package types
 // BatchProcessor is the interface your batch processor needs to implement.
 //
 // It must be safe to be called from multiple goroutines simultaneously.
-type BatchProcessor[QQ, SS any] interface {
-	ProcessJobs(jobs QQ) (SS, error)
+type BatchProcessor[QQ, RR any] interface {
+	ProcessJobs(jobs QQ) (RR, error)
 }
 
 // BatchResult defines the interface for returning results from batch processing.
-type BatchResult[S any] interface {
-	Result() (S, error)
+type BatchResult[R any] interface {
+	Result() (R, error)
 }

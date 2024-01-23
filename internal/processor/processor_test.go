@@ -39,8 +39,8 @@ func correlateRequest(q int) string {
 	return strconv.Itoa(q)
 }
 
-func correlateResult(s string) string {
-	return s
+func correlateResult(r string) string {
+	return r
 }
 
 type ProcessorTestSuite struct {
@@ -59,7 +59,7 @@ func (s *ProcessorTestSuite) SetupTest() {
 	s.Processor = &processor.Processor[int, string, string, []int, []string]{
 		Processor:      s.BatchProcessor,
 		CorrelateQ:     correlateRequest,
-		CorrelateS:     correlateResult,
+		CorrelateR:     correlateResult,
 		ErrNoResult:    errNoResult,
 		ErrDuplicateID: errDuplicateID,
 	}

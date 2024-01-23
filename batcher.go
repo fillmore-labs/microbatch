@@ -29,8 +29,8 @@ import (
 )
 
 // Batcher handles submitting requests in batches and returning results through channels.
-type Batcher[Q, S any] struct {
-	requests chan<- internal.BatchRequest[Q, S]
+type Batcher[Q, R any] struct {
+	requests chan<- internal.BatchRequest[Q, R]
 
 	terminating chan<- struct{}
 	terminated  <-chan struct{}
@@ -54,22 +54,22 @@ var (
 //   - opts are used to configure the batch size and timeout.
 //
 // The batch collector is run in a goroutine which must be terminated with [Batcher.Shutdown].
-func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
-	batchProcessor types.BatchProcessor[QQ, SS],
-	correlateRequest func(Q) K,
-	correlateResult func(S) K,
+func NewBatcher[Q, R any, C comparable, QQ ~[]Q, RR ~[]R](
+	batchProcessor types.BatchProcessor[QQ, RR],
+	correlateRequest func(Q) C,
+	correlateResult func(R) C,
 	opts ...Option,
-) *Batcher[Q, S] {
+) *Batcher[Q, R] {
 	// Channels used for communicating from the Batcher to the Collector.
-	requests := make(chan internal.BatchRequest[Q, S])
+	requests := make(chan internal.BatchRequest[Q, R])
 	terminating := make(chan struct{})
 	terminated := make(chan struct{})
 
 	// Wrap the supplied processor.
-	p := &processor.Processor[Q, S, K, QQ, SS]{
+	p := &processor.Processor[Q, R, C, QQ, RR]{
 		Processor:      batchProcessor,
 		CorrelateQ:     correlateRequest,
-		CorrelateS:     correlateResult,
+		CorrelateR:     correlateResult,
 		ErrNoResult:    ErrNoResult,
 		ErrDuplicateID: ErrDuplicateID,
 	}
@@ -79,7 +79,7 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 		opt(&option)
 	}
 
-	c := &collector.Collector[Q, S]{
+	c := &collector.Collector[Q, R]{
 		Requests:      requests,
 		Terminating:   terminating,
 		Terminated:    terminated,
@@ -90,7 +90,7 @@ func NewBatcher[Q, S any, K comparable, QQ ~[]Q, SS ~[]S](
 
 	go c.Run()
 
-	return &Batcher[Q, S]{
+	return &Batcher[Q, R]{
 		requests:    requests,
 		terminating: terminating,
 		terminated:  terminated,
@@ -121,10 +121,10 @@ func WithTimeout(timeout time.Duration) Option {
 }
 
 // ExecuteJob submits a job and waits for the result.
-func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
+func (b *Batcher[Q, R]) ExecuteJob(ctx context.Context, request Q) (R, error) {
 	resultChan, err := b.SubmitJob(ctx, request)
 	if err != nil {
-		return *new(S), err
+		return *new(R), err
 	}
 
 	select {
@@ -132,14 +132,14 @@ func (b *Batcher[Q, S]) ExecuteJob(ctx context.Context, request Q) (S, error) {
 		return result.Result()
 
 	case <-ctx.Done():
-		return *new(S), fmt.Errorf("job canceled: %w", ctx.Err())
+		return *new(R), fmt.Errorf("job canceled: %w", ctx.Err())
 	}
 }
 
 // SubmitJob Submits a job without waiting for the result.
-func (b *Batcher[Q, S]) SubmitJob(_ context.Context, request Q) (<-chan types.BatchResult[S], error) {
-	resultChan := processor.NewResultChannel[S]()
-	batchRequest := internal.BatchRequest[Q, S]{
+func (b *Batcher[Q, R]) SubmitJob(_ context.Context, request Q) (<-chan types.BatchResult[R], error) {
+	resultChan := processor.NewResultChannel[R]()
+	batchRequest := internal.BatchRequest[Q, R]{
 		Request:    request,
 		ResultChan: resultChan,
 	}

@@ -20,6 +20,8 @@ It is also used in other contexts, like the [Facebook DataLoader](https://github
 
 ## Usage
 
+Try the example [at the Go Playground](https://go.dev/play/p/WCEfXzoRWsR).
+
 ### Implement `Job` and `JobResult`
 
 ```go
@@ -35,7 +37,7 @@ type (
 	}
 )
 
-func correlateRequest(j *Job) string      { return j.ID }
+func correlateRequest(q *Job) string      { return q.ID }
 func correlateResult(r *JobResult) string { return r.ID }
 ```
 
