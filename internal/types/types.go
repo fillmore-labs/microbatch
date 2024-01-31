@@ -16,12 +16,10 @@
 
 package types
 
-import (
-	"fillmore-labs.com/microbatch/types"
-)
+import "fillmore-labs.com/exp/async"
 
 // BatchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
 type BatchRequest[Q, R any] struct {
-	Request    Q
-	ResultChan chan<- types.BatchResult[R]
+	Request Q
+	Result  async.Promise[R]
 }

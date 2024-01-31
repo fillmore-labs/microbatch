@@ -14,16 +14,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package types
+package mocks
 
-// BatchProcessor is the interface your batch processor needs to implement.
-//
-// It must be safe to be called from multiple goroutines simultaneously.
+// BatchProcessor for testing.
 type BatchProcessor[QQ, RR any] interface {
 	ProcessJobs(jobs QQ) (RR, error)
-}
-
-// BatchResult defines the interface for returning results from batch processing.
-type BatchResult[R any] interface {
-	Result() (R, error)
 }

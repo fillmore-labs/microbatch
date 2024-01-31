@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"fillmore-labs.com/exp/async"
 	internal "fillmore-labs.com/microbatch/internal/types"
-	"fillmore-labs.com/microbatch/types"
 )
 
 // Processor handles batch processing of jobs and results.
@@ -30,8 +30,8 @@ import (
 //   - It is read-only after construction and therefore thread-safe.
 //   - It isolates collector logic from correlation types.
 type Processor[Q, R any, C comparable, QQ ~[]Q, RR ~[]R] struct {
-	// Processor processes job batches.
-	Processor types.BatchProcessor[QQ, RR]
+	// ProcessJobs processes job batches.
+	ProcessJobs func(jobs QQ) (RR, error)
 	// CorrelateQ maps each job to a correlation ID.
 	CorrelateQ func(job Q) C
 	// CorrelateR maps each result to a correlation ID.
@@ -42,97 +42,74 @@ type Processor[Q, R any, C comparable, QQ ~[]Q, RR ~[]R] struct {
 	ErrDuplicateID error
 }
 
-// resultChanMap is map from correlation IDs to result channels.
-type resultChanMap[R any, C comparable] map[C]chan<- types.BatchResult[R]
+// channelMap is map from correlation IDs to result [async.Promise]s.
+type channelMap[R any, C comparable] map[C]async.Promise[R]
 
 // Process takes a batch of requests and handles processing.
 func (p *Processor[Q, R, _, _, _]) Process(requests []internal.BatchRequest[Q, R]) {
 	// Separate jobs from result channels.
-	jobs, resultChannels := p.separateJobs(requests)
+	jobs, promises := p.separateJobs(requests)
 
 	// Process jobs.
-	results, err := p.Processor.ProcessJobs(jobs)
+	results, err := p.ProcessJobs(jobs)
 	if err != nil { // Send errors if processing failed.
-		p.sendError(resultChannels, err)
+		promises.sendError(err)
 
 		return
 	}
 
 	// Send successful results.
-	p.sendResults(results, resultChannels)
+	promises.sendResults(results, p.CorrelateR)
 	// Send errors for jobs without results.
-	p.sendError(resultChannels, p.ErrNoResult)
+	promises.sendError(p.ErrNoResult)
 }
 
 // separateJobs separates jobs from result channels.
 func (p *Processor[Q, R, C, QQ, _]) separateJobs(
 	requests []internal.BatchRequest[Q, R],
-) (QQ, resultChanMap[R, C]) {
+) (QQ, channelMap[R, C]) {
 	jobs := make(QQ, 0, len(requests))
-	resultChannels := make(resultChanMap[R, C], len(requests))
+	promises := make(channelMap[R, C], len(requests))
 
 	for _, job := range requests {
-		jobRequest, resultChan := job.Request, job.ResultChan
+		jobRequest, jobResult := job.Request, job.Result
 
 		correlationID := p.CorrelateQ(jobRequest)
-		if _, ok := resultChannels[correlationID]; ok {
-			resultChan <- batchResult[R]{
-				err: fmt.Errorf("%w: %v", p.ErrDuplicateID, correlationID),
-			}
+		if _, ok := promises[correlationID]; ok {
+			jobResult.SendError(fmt.Errorf("%w: %v", p.ErrDuplicateID, correlationID))
 
 			continue
 		}
 
 		jobs = append(jobs, jobRequest)
-		resultChannels[correlationID] = resultChan
+		promises[correlationID] = jobResult
 	}
 
-	return jobs, resultChannels
-}
-
-// NewResultChannel creates a new result channel.
-//
-// This function is here because processor logic implicitly depends on a buffered channel to allow for sending results
-// without blocking.
-func NewResultChannel[R any]() chan types.BatchResult[R] {
-	return make(chan types.BatchResult[R], 1)
-}
-
-// batchResult is a result for a request send to the result channel.
-type batchResult[R any] struct {
-	value R
-	err   error
-}
-
-// Result implements [types.BatchResult].
-func (b batchResult[R]) Result() (R, error) {
-	return b.value, b.err
+	return jobs, promises
 }
 
 // sendResults sends results to matching channels.
-func (p *Processor[_, R, C, _, RR]) sendResults(
-	results RR,
-	resultChannels resultChanMap[R, C],
+func (c channelMap[R, C]) sendResults(
+	results []R,
+	correlateR func(jobResult R) C,
 ) {
 	for _, result := range results {
-		correlationID := p.CorrelateR(result)
-		resultChan, ok := resultChannels[correlationID]
+		correlationID := correlateR(result)
+		promise, ok := c[correlationID]
 		if !ok {
 			slog.Warn("Uncorrelated result dropped", "id", correlationID)
 
 			continue
 		}
 
-		delete(resultChannels, correlationID)
-		resultChan <- batchResult[R]{value: result}
-		close(resultChan)
+		delete(c, correlationID)
+		promise.SendValue(result)
 	}
 }
 
 // sendError sends an error to all remaining result channels.
-func (*Processor[_, R, C, _, _]) sendError(resultChannels resultChanMap[R, C], err error) {
-	for _, resultChan := range resultChannels {
-		resultChan <- batchResult[R]{err: err}
-		close(resultChan)
+func (c channelMap[R, _]) sendError(err error) {
+	for _, promise := range c {
+		promise.SendError(err)
 	}
 }

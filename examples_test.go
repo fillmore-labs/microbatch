@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch"
-	"fillmore-labs.com/microbatch/types"
 )
 
 type (
@@ -42,6 +42,10 @@ type (
 	JobResults []*JobResult
 )
 
+func (j *Job) JobID() JobID                  { return j.ID }
+func (j *JobResult) JobID() JobID            { return j.ID }
+func (j *JobResult) Unwrap() (string, error) { return j.Body, nil }
+
 type RemoteProcessor struct{}
 
 func (p *RemoteProcessor) ProcessJobs(jobs Jobs) (JobResults, error) {
@@ -57,32 +61,21 @@ func (p *RemoteProcessor) ProcessJobs(jobs Jobs) (JobResults, error) {
 	return results, nil
 }
 
-var _ types.BatchProcessor[Jobs, JobResults] = (*RemoteProcessor)(nil)
-
-func ExampleBatchProcessor() {
-	processor := &RemoteProcessor{}
-	results, _ := processor.ProcessJobs(Jobs{&Job{ID: 1}, &Job{ID: 2}})
-	for _, result := range results {
-		fmt.Println(result.Body)
-	}
-	// Output:
-	// Processed job 1
-	// Processed job 2
-}
-
-// Example (ExecuteJob) demonstrates how to use the blocking [Batcher.ExecuteJob].
-func Example_executeJob() {
+// Example (Blocking) demonstrates how to use [Batcher.SubmitJob] in a single line.
+func Example_blocking() {
 	// Initialize
 	processor := &RemoteProcessor{}
-	opts := []microbatch.Option{microbatch.WithSize(3), microbatch.WithTimeout(10 * time.Millisecond)}
 	batcher := microbatch.NewBatcher(
-		processor,
-		func(q *Job) JobID { return q.ID },
-		func(r *JobResult) JobID { return r.ID },
-		opts...,
+		processor.ProcessJobs,
+		(*Job).JobID,
+		(*JobResult).JobID,
+		microbatch.WithSize(3),
+		microbatch.WithTimeout(10*time.Millisecond),
 	)
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
 	const iterations = 5
 	var wg sync.WaitGroup
 
@@ -91,7 +84,7 @@ func Example_executeJob() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if result, err := batcher.ExecuteJob(ctx, &Job{ID: JobID(i)}); err == nil {
+			if result, err := batcher.SubmitJob(&Job{ID: JobID(i)}).Wait(ctx); err == nil {
 				fmt.Println(result.Body)
 			}
 		}(i) // https://go.dev/doc/faq#closures_and_goroutines
@@ -108,46 +101,36 @@ func Example_executeJob() {
 	// Processed job 5
 }
 
-// Example (SubmitJob) demonstrates how to use [Batcher.SubmitJob] with a timeout.
+// Example (Asynchronous) demonstrates how to use [Batcher.SubmitJob] with a timeout.
 // Note that you can shut down the batcher without waiting for the jobs to finish.
-func Example_submitJob() {
+func Example_asynchronous() {
 	// Initialize
 	processor := &RemoteProcessor{}
 	batcher := microbatch.NewBatcher(
-		processor,
-		func(q *Job) JobID { return q.ID },
-		func(r *JobResult) JobID { return r.ID },
+		processor.ProcessJobs,
+		(*Job).JobID,
+		(*JobResult).JobID,
 		microbatch.WithSize(3),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
 	const iterations = 5
 
 	var wg sync.WaitGroup
 	for i := 1; i <= iterations; i++ {
-		result, err := batcher.SubmitJob(ctx, &Job{ID: JobID(i)})
-		if err != nil {
-			fmt.Printf("Error submitting job %d: %v\n", i, err)
-
-			continue
-		}
+		future := batcher.SubmitJob(&Job{ID: JobID(i)})
 
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 
-			select {
-			case r := <-result:
-				value, err := r.Result()
-				if err == nil {
-					fmt.Println(value.Body)
-				} else {
-					fmt.Printf("Error executing job %d: %v\n", i, err)
-				}
-
-			case <-ctx.Done():
-				fmt.Printf("Job %d canceled: %v\n", i, ctx.Err())
+			result, err := async.Then(ctx, future, (*JobResult).Unwrap)
+			if err == nil {
+				fmt.Println(result)
+			} else {
+				fmt.Printf("Error executing job %d: %v\n", i, err)
 			}
 		}(i)
 	}

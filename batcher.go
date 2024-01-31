@@ -17,15 +17,13 @@
 package microbatch
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"time"
 
+	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch/internal/collector"
 	"fillmore-labs.com/microbatch/internal/processor"
 	internal "fillmore-labs.com/microbatch/internal/types"
-	"fillmore-labs.com/microbatch/types"
 )
 
 // Batcher handles submitting requests in batches and returning results through channels.
@@ -39,7 +37,7 @@ type Batcher[Q, R any] struct {
 var (
 	// ErrBatcherTerminated is returned when the batcher is terminated.
 	ErrBatcherTerminated = errors.New("batcher terminated")
-	// ErrNoResult is returned when the response from [BatchProcessor] is missing a
+	// ErrNoResult is returned when the response from processJobs is missing a
 	// matching correlation ID.
 	ErrNoResult = errors.New("no result")
 	// ErrDuplicateID is returned when a job has an already existing correlation ID.
@@ -55,9 +53,9 @@ var (
 //
 // The batch collector is run in a goroutine which must be terminated with [Batcher.Shutdown].
 func NewBatcher[Q, R any, C comparable, QQ ~[]Q, RR ~[]R](
-	batchProcessor types.BatchProcessor[QQ, RR],
-	correlateRequest func(Q) C,
-	correlateResult func(R) C,
+	processJobs func(jobs QQ) (RR, error),
+	correlateRequest func(request Q) C,
+	correlateResult func(result R) C,
 	opts ...Option,
 ) *Batcher[Q, R] {
 	// Channels used for communicating from the Batcher to the Collector.
@@ -67,7 +65,7 @@ func NewBatcher[Q, R any, C comparable, QQ ~[]Q, RR ~[]R](
 
 	// Wrap the supplied processor.
 	p := &processor.Processor[Q, R, C, QQ, RR]{
-		Processor:      batchProcessor,
+		ProcessJobs:    processJobs,
 		CorrelateQ:     correlateRequest,
 		CorrelateR:     correlateResult,
 		ErrNoResult:    ErrNoResult,
@@ -120,42 +118,29 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
-// ExecuteJob submits a job and waits for the result.
-func (b *Batcher[Q, R]) ExecuteJob(ctx context.Context, request Q) (R, error) {
-	resultChan, err := b.SubmitJob(ctx, request)
-	if err != nil {
-		return *new(R), err
+func (b *Batcher[Q, R]) submitRequest(request Q, promise async.Promise[R]) {
+	batchRequest := internal.BatchRequest[Q, R]{
+		Request: request,
+		Result:  promise,
 	}
 
 	select {
-	case result := <-resultChan:
-		return result.Result()
+	case b.requests <- batchRequest:
 
-	case <-ctx.Done():
-		return *new(R), fmt.Errorf("job canceled: %w", ctx.Err())
+	case <-b.terminated:
+		promise.SendError(ErrBatcherTerminated)
 	}
 }
 
 // SubmitJob Submits a job without waiting for the result.
-func (b *Batcher[Q, R]) SubmitJob(_ context.Context, request Q) (<-chan types.BatchResult[R], error) {
-	resultChan := processor.NewResultChannel[R]()
-	batchRequest := internal.BatchRequest[Q, R]{
-		Request:    request,
-		ResultChan: resultChan,
-	}
+func (b *Batcher[Q, R]) SubmitJob(request Q) async.Future[R] {
+	submitJob := func(promise async.Promise[R]) { b.submitRequest(request, promise) }
 
-	select {
-	case <-b.terminated:
-		return nil, ErrBatcherTerminated
-
-	case b.requests <- batchRequest:
-	}
-
-	return resultChan, nil
+	return async.NewFuture(submitJob)
 }
 
 // Shutdown needs to be called to reclaim resources and send the last batch.
-// No calls to [Batcher.SubmitJob] or [Batcher.ExecuteJob] after this will be accepted.
+// No calls to [Batcher.SubmitJob] after this will be accepted.
 func (b *Batcher[_, _]) Shutdown() {
 	select {
 	case b.terminating <- struct{}{}:

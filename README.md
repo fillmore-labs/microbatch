@@ -16,11 +16,11 @@ explanation by [Jakob Jenkov](https://jenkov.com/tutorials/java-performance/micr
 Popular examples are
 [Spark Structured Streaming](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html#overview)
 and [Apache Kafka](https://kafka.apache.org/documentation/#upgrade_11_message_format).
-It is also used in other contexts, like the [Facebook DataLoader](https://github.com/graphql/dataloader#batching).
+It is also used in other contexts, like the [Facebook DataLoader](https://github.com/graphql/dataloader#dataloader).
 
 ## Usage
 
-Try the example [at the Go Playground](https://go.dev/play/p/WCEfXzoRWsR).
+Try the example [at the Go Playground](https://go.dev/play/p/NbFwHqPOjFN).
 
 ### Implement `Job` and `JobResult`
 
@@ -34,30 +34,40 @@ type (
 	JobResult struct {
 		ID       string `json:"id"`
 		Response string `json:"body"`
+		Error    string `json:"error"`
 	}
+
+	Jobs       []*Job
+	JobResults []*JobResult
+
+	RemoteError struct{ msg string }
 )
 
-func correlateRequest(q *Job) string      { return q.ID }
-func correlateResult(r *JobResult) string { return r.ID }
+func (q *Job) JobID() string       { return q.ID }
+func (r *JobResult) JobID() string { return r.ID }
+
+func (e RemoteError) Error() string { return e.msg }
+
+func (r *JobResult) Unwrap() (string, error) {
+	if r.Error != "" {
+		return "", RemoteError{r.Error}
+	}
+
+	return r.Response, nil
+}
 ```
 
 ### Implement the Batch Processor
 
 ```go
-type RemoteProcessor struct{}
-
-func (*RemoteProcessor) ProcessJobs(jobs []*Job) ([]*JobResult, error) {
-	request, err := json.Marshal(jobs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal jobs: %w", err)
-	}
-
-	response := request // Send the jobs downstream for processing and retrieve the results.
-
-	var results []*JobResult
-	err = json.Unmarshal(response, &results)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal job results: %w", err)
+func processJobs(jobs Jobs) (JobResults, error) {
+	results := make(JobResults, 0, len(jobs))
+	for _, job := range jobs {
+		result := &JobResult{
+			ID:       job.ID,
+			Response: fmt.Sprintf("Processed job %s", job.ID),
+		}
+		results = append(results, result)
 	}
 
 	return results, nil
@@ -67,26 +77,44 @@ func (*RemoteProcessor) ProcessJobs(jobs []*Job) ([]*JobResult, error) {
 ### Use the Batcher
 
 ```go
+	const (
+		batchSize        = 3
+		maxBatchDuration = 10 * time.Millisecond
+		iterations       = 5
+	)
+
 	// Initialize
-	processor := &RemoteProcessor{}
-	opts := []microbatch.Option{microbatch.WithSize(3), microbatch.WithTimeout(10 * time.Millisecond)}
-	batcher := microbatch.NewBatcher(processor, correlateRequest, correlateResult, opts...)
+	batcher := microbatch.NewBatcher(
+		processJobs,
+		(*Job).JobID,
+		(*JobResult).JobID,
+		microbatch.WithSize(batchSize),
+		microbatch.WithTimeout(maxBatchDuration),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	var wg sync.WaitGroup
+	for i := 1; i <= iterations; i++ {
+		future := batcher.SubmitJob(&Job{ID: strconv.Itoa(i)})
 
-	// Process jobs
-	ctx := context.Background()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if result, err := batcher.ExecuteJob(ctx, &Job{ID: "1", Request: "Hello, world"}); err == nil {
-			fmt.Println(result.Response)
-		}
-	}()
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			result, err := async.Then(ctx, future, (*JobResult).Unwrap)
+			if err == nil {
+				fmt.Println(result)
+			} else {
+				fmt.Printf("Error executing job %d: %v\n", i, err)
+			}
+		}(i)
+	}
 
 	// Shut down
-	wg.Wait()
 	batcher.Shutdown()
+	wg.Wait()
 ```
 
 ## Design
@@ -125,7 +153,7 @@ simplified reasoning about potential synchronization issues.
 #### Collector (`collector.Collector`)
 
 The collector is responsible for managing queued requests and initiating batch processing.
-It operates in a single goroutine, eliminating the need for locks.
+It operates in a single worker goroutine, eliminating the need for locks.
 This design choice simplifies the execution flow and minimizes potential contention issues.
 The collector maintains an array of queued requests and, when a complete batch is formed or a maximum collection time
 is reached, spawns a processor.

@@ -44,10 +44,11 @@ func TestBatcherTestSuite(t *testing.T) {
 }
 
 func (s *BatcherTestSuite) SetupTest() {
-	s.BatchProcessor = mocks.NewMockBatchProcessor[[]int, []string](s.T())
+	batchProcessor := mocks.NewMockBatchProcessor[[]int, []string](s.T())
 
+	s.BatchProcessor = batchProcessor
 	s.Batcher = microbatch.NewBatcher(
-		s.BatchProcessor,
+		batchProcessor.ProcessJobs,
 		correlateRequest,
 		correlateResult,
 	)
@@ -75,11 +76,11 @@ func (s *BatcherTestSuite) TestBatcher() {
 	ctx := context.Background()
 	var g errgroup.Group
 
-	results := make([]string, iterations)
+	var results [iterations]string
 	for i := 0; i < iterations; i++ {
 		i := i
 		g.Go(func() error {
-			res, err := s.Batcher.ExecuteJob(ctx, i+1)
+			res, err := s.Batcher.SubmitJob(i + 1).Wait(ctx)
 			if err == nil {
 				results[i] = res
 			}
@@ -96,7 +97,7 @@ func (s *BatcherTestSuite) TestBatcher() {
 	s.NoErrorf(err, "Unexpected error executing jobs")
 
 	expected := makeResults(iterations)
-	s.Equal(expected, results)
+	s.Equal(expected, results[:])
 }
 
 func makeResults(iterations int) []string {
@@ -115,7 +116,7 @@ func (s *BatcherTestSuite) TestTerminatedBatcher() {
 
 	// when
 	ctx := context.Background()
-	_, err := s.Batcher.ExecuteJob(ctx, 1)
+	_, err := s.Batcher.SubmitJob(1).Wait(ctx)
 
 	// then
 	s.ErrorIs(err, microbatch.ErrBatcherTerminated)
@@ -132,13 +133,12 @@ func (s *BatcherTestSuite) TestCancellation() {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
-	results := make([]error, iterations)
+	var errors [iterations]error
 	for i := 0; i < iterations; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := s.Batcher.ExecuteJob(ctx, i+1)
-			results[i] = err
+			_, errors[i] = s.Batcher.SubmitJob(i + 1).Wait(ctx)
 		}(i)
 	}
 
@@ -150,7 +150,7 @@ func (s *BatcherTestSuite) TestCancellation() {
 	// then
 	wg.Wait()
 
-	for i, err := range results {
+	for i, err := range errors {
 		s.ErrorIsf(err, context.Canceled, "Unexpected result for job %d", i+1)
 	}
 }

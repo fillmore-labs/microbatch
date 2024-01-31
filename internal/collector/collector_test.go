@@ -74,6 +74,11 @@ func (s *CollectorTestSuite) SetupTest() {
 	}
 }
 
+func (s *CollectorTestSuite) terminateCollector() {
+	s.Terminating <- struct{}{}
+	<-s.Terminated
+}
+
 func (s *CollectorTestSuite) TestCollectorTerminates() {
 	// given
 	s.Collector.Timer = nil
@@ -86,18 +91,17 @@ func (s *CollectorTestSuite) TestCollectorTerminates() {
 		close(batcherDone)
 	}()
 
-	s.Terminating <- struct{}{}
-	<-s.Terminated
+	s.terminateCollector()
 
 	// then
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
 	select {
-	case <-batcherDone:
-
 	case <-ctx.Done():
 		s.Fail("Collector did not shut down")
+
+	case <-batcherDone:
 	}
 
 	s.Processor.AssertNotCalled(s.T(), "Process", mock.Anything)
@@ -127,8 +131,7 @@ func (s *CollectorTestSuite) TestCollector() {
 		}
 	}
 
-	s.Terminating <- struct{}{}
-	<-s.Terminated
+	s.terminateCollector()
 
 	// then
 	time.Sleep(settleGoRoutines)
@@ -158,8 +161,7 @@ func (s *CollectorTestSuite) TestCollectorWithTimeouts() {
 		}
 	}
 
-	s.Terminating <- struct{}{}
-	<-s.Terminated
+	s.terminateCollector()
 
 	// then
 	time.Sleep(settleGoRoutines)
@@ -188,8 +190,7 @@ func (s *CollectorTestSuite) TestCollectorWithoutSize() {
 
 	s.Requests <- internal.BatchRequest[int, string]{Request: 2}
 
-	s.Terminating <- struct{}{}
-	<-s.Terminated
+	s.terminateCollector()
 
 	// then
 	time.Sleep(settleGoRoutines)
@@ -214,8 +215,7 @@ func (s *CollectorTestSuite) TestCollectorWithRealTimer() {
 
 	s.Requests <- internal.BatchRequest[int, string]{Request: 2}
 
-	s.Terminating <- struct{}{}
-	<-s.Terminated
+	s.terminateCollector()
 
 	// then
 	time.Sleep(settleGoRoutines)

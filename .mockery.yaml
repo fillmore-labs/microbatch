@@ -8,9 +8,6 @@ disable-version-string: true
 boilerplate-file: "internal/mocks/boilerplate.go.txt"
 
 packages:
-  fillmore-labs.com/microbatch/types:
-    interfaces:
-      BatchProcessor:
   fillmore-labs.com/microbatch/internal/collector:
     interfaces:
       Processor:
@@ -18,3 +15,6 @@ packages:
         config:
           mockname: "MockTimerDelegate"
           filename: "timer_delegate_mock.go"
+  fillmore-labs.com/microbatch/internal/mocks:
+    interfaces:
+      BatchProcessor:
