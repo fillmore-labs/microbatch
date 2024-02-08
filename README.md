@@ -1,4 +1,4 @@
-# Micro Batcher
+# Fillmore Labs Micro Batcher
 
 [![Go Reference](https://pkg.go.dev/badge/fillmore-labs.com/microbatch.svg)](https://pkg.go.dev/fillmore-labs.com/microbatch)
 [![Build Status](https://badge.buildkite.com/1d68e28b14ecbbd4e4066e61c25f81ef08a8237615f5d03a6a.svg)](https://buildkite.com/fillmore-labs/microbatch)
@@ -65,7 +65,7 @@ func processJobs(jobs Jobs) (JobResults, error) {
 	for _, job := range jobs {
 		result := &JobResult{
 			ID:       job.ID,
-			Response: fmt.Sprintf("Processed job %s", job.ID),
+			Response: "Processed job " + job.ID,
 		}
 		results = append(results, result)
 	}

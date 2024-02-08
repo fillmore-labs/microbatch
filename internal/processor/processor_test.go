@@ -132,13 +132,13 @@ func (s *ProcessorTestSuite) TestProcessorDuplicateUncorrelated() {
 	}
 }
 
-func makeRequestsResults(ids []int) ([]internal.BatchRequest[int, string], []async.Memoizer[string]) {
+func makeRequestsResults(ids []int) ([]internal.BatchRequest[int, string], []*async.Memoizer[string]) {
 	requests := make([]internal.BatchRequest[int, string], 0, len(ids))
-	results := make([]async.Memoizer[string], 0, len(ids))
+	results := make([]*async.Memoizer[string], 0, len(ids))
 	for _, id := range ids {
-		request := internal.BatchRequest[int, string]{Request: id}
-		setPromise := func(promise async.Promise[string]) { request.Result = promise }
-		result := async.NewFuture(setPromise).Memoize()
+		future, promise := async.NewFuture[string]()
+		request := internal.BatchRequest[int, string]{Request: id, Result: promise}
+		result := future.Memoize()
 
 		requests = append(requests, request)
 		results = append(results, result)

@@ -118,7 +118,9 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
-func (b *Batcher[Q, R]) submitRequest(request Q, promise async.Promise[R]) {
+// SubmitJob Submits a job without waiting for the result.
+func (b *Batcher[Q, R]) SubmitJob(request Q) async.Future[R] {
+	future, promise := async.NewFuture[R]()
 	batchRequest := internal.BatchRequest[Q, R]{
 		Request: request,
 		Result:  promise,
@@ -128,15 +130,10 @@ func (b *Batcher[Q, R]) submitRequest(request Q, promise async.Promise[R]) {
 	case b.requests <- batchRequest:
 
 	case <-b.terminated:
-		promise.SendError(ErrBatcherTerminated)
+		promise.Reject(ErrBatcherTerminated)
 	}
-}
 
-// SubmitJob Submits a job without waiting for the result.
-func (b *Batcher[Q, R]) SubmitJob(request Q) async.Future[R] {
-	submitJob := func(promise async.Promise[R]) { b.submitRequest(request, promise) }
-
-	return async.NewFuture(submitJob)
+	return future
 }
 
 // Shutdown needs to be called to reclaim resources and send the last batch.

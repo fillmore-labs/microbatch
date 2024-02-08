@@ -25,11 +25,11 @@ import (
 	"testing"
 	"time"
 
+	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch"
 	"fillmore-labs.com/microbatch/internal/mocks"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"golang.org/x/sync/errgroup"
 )
 
 type BatcherTestSuite struct {
@@ -73,31 +73,20 @@ func (s *BatcherTestSuite) TestBatcher() {
 	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(returned, nil).Once()
 
 	// when
-	ctx := context.Background()
-	var g errgroup.Group
-
-	var results [iterations]string
+	var futures [iterations]async.Awaitable[string]
 	for i := 0; i < iterations; i++ {
-		i := i
-		g.Go(func() error {
-			res, err := s.Batcher.SubmitJob(i + 1).Wait(ctx)
-			if err == nil {
-				results[i] = res
-			}
-
-			return err
-		})
+		futures[i] = s.Batcher.SubmitJob(i + 1)
 	}
-
-	time.Sleep(settleGoRoutines)
 	s.Batcher.Shutdown()
 
+	ctx := context.Background()
+	results, err := async.WaitAllValues(ctx, futures[:]...)
+
 	// then
-	err := g.Wait()
 	s.NoErrorf(err, "Unexpected error executing jobs")
 
 	expected := makeResults(iterations)
-	s.Equal(expected, results[:])
+	s.Equal(expected, results)
 }
 
 func makeResults(iterations int) []string {

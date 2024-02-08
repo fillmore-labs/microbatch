@@ -51,19 +51,19 @@ func NewDataLoader[K comparable, R any, KK ~[]K, RR ~[]R](
 }
 
 // Load retrieves a value from the cache or loads it asynchronously.
-func (d *DataLoader[K, R]) Load(key K) async.Awaitable[R] {
+func (d *DataLoader[K, R]) Load(key K) *async.Memoizer[R] {
 	loadKeyOnce, ok := d.cache.Load(key)
 	if !ok {
 		loadKeyOnce, _ = d.cache.LoadOrStore(key, sync.OnceValue(d.load(key)))
 	}
-	loadKey, _ := loadKeyOnce.(func() async.Awaitable[R])
+	loadKey, _ := loadKeyOnce.(func() *async.Memoizer[R])
 
 	return loadKey()
 }
 
-// load submits the key to the batcher and memoize the result.
-func (d *DataLoader[K, R]) load(key K) func() async.Awaitable[R] {
-	return func() async.Awaitable[R] {
+// load submits the key to the batcher and memoizes the result.
+func (d *DataLoader[K, R]) load(key K) func() *async.Memoizer[R] {
+	return func() *async.Memoizer[R] {
 		return d.batcher.SubmitJob(key).Memoize()
 	}
 }

@@ -2,12 +2,11 @@ module fillmore-labs.com/microbatch
 
 go 1.21
 
-toolchain go1.21.6
+toolchain go1.22.0
 
 require (
-	fillmore-labs.com/exp/async v0.0.1
+	fillmore-labs.com/exp/async v0.0.2
 	github.com/stretchr/testify v1.8.4
-	golang.org/x/sync v0.6.0
 )
 
 require (

@@ -76,7 +76,7 @@ func (p *Processor[Q, R, C, QQ, _]) separateJobs(
 
 		correlationID := p.CorrelateQ(jobRequest)
 		if _, ok := promises[correlationID]; ok {
-			jobResult.SendError(fmt.Errorf("%w: %v", p.ErrDuplicateID, correlationID))
+			jobResult.Reject(fmt.Errorf("%w: %v", p.ErrDuplicateID, correlationID))
 
 			continue
 		}
@@ -103,13 +103,13 @@ func (c channelMap[R, C]) sendResults(
 		}
 
 		delete(c, correlationID)
-		promise.SendValue(result)
+		promise.Fulfill(result)
 	}
 }
 
 // sendError sends an error to all remaining result channels.
 func (c channelMap[R, _]) sendError(err error) {
 	for _, promise := range c {
-		promise.SendError(err)
+		promise.Reject(err)
 	}
 }
