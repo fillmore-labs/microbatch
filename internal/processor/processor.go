@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"fillmore-labs.com/exp/async"
 	internal "fillmore-labs.com/microbatch/internal/types"
+	"fillmore-labs.com/promise"
 )
 
 // Processor handles batch processing of jobs and results.
@@ -42,8 +42,8 @@ type Processor[Q, R any, C comparable, QQ ~[]Q, RR ~[]R] struct {
 	ErrDuplicateID error
 }
 
-// channelMap is map from correlation IDs to result [async.Promise]s.
-type channelMap[R any, C comparable] map[C]async.Promise[R]
+// resultMap is map from correlation ID to result [promise.Promise].
+type resultMap[R any, C comparable] map[C]promise.Promise[R]
 
 // Process takes a batch of requests and handles processing.
 func (p *Processor[Q, R, _, _, _]) Process(requests []internal.BatchRequest[Q, R]) {
@@ -67,9 +67,9 @@ func (p *Processor[Q, R, _, _, _]) Process(requests []internal.BatchRequest[Q, R
 // separateJobs separates jobs from result channels.
 func (p *Processor[Q, R, C, QQ, _]) separateJobs(
 	requests []internal.BatchRequest[Q, R],
-) (QQ, channelMap[R, C]) {
+) (QQ, resultMap[R, C]) {
 	jobs := make(QQ, 0, len(requests))
-	promises := make(channelMap[R, C], len(requests))
+	promises := make(resultMap[R, C], len(requests))
 
 	for _, job := range requests {
 		jobRequest, jobResult := job.Request, job.Result
@@ -89,27 +89,27 @@ func (p *Processor[Q, R, C, QQ, _]) separateJobs(
 }
 
 // sendResults sends results to matching channels.
-func (c channelMap[R, C]) sendResults(
+func (r resultMap[R, C]) sendResults(
 	results []R,
 	correlateR func(jobResult R) C,
 ) {
 	for _, result := range results {
 		correlationID := correlateR(result)
-		promise, ok := c[correlationID]
+		promise, ok := r[correlationID]
 		if !ok {
 			slog.Warn("Uncorrelated result dropped", "id", correlationID)
 
 			continue
 		}
 
-		delete(c, correlationID)
-		promise.Fulfill(result)
+		delete(r, correlationID)
+		promise.Resolve(result)
 	}
 }
 
 // sendError sends an error to all remaining result channels.
-func (c channelMap[R, _]) sendError(err error) {
-	for _, promise := range c {
+func (r resultMap[R, _]) sendError(err error) {
+	for _, promise := range r {
 		promise.Reject(err)
 	}
 }

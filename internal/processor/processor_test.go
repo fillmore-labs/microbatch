@@ -21,10 +21,10 @@ import (
 	"strconv"
 	"testing"
 
-	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch/internal/mocks"
 	"fillmore-labs.com/microbatch/internal/processor"
 	internal "fillmore-labs.com/microbatch/internal/types"
+	"fillmore-labs.com/promise"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -73,14 +73,14 @@ func (s *ProcessorTestSuite) TestProcessor() {
 	reply := []string{"2", "1", "3"}
 
 	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(reply, nil).Once()
-	requests, results := makeRequestsResults(ids)
+	requests, results := makeRequestsResults[int, string](ids)
 
 	// when
 	s.Processor.Process(requests)
 
 	// then
 	for i, result := range results {
-		value, err := result.TryWait()
+		value, err := result.Try()
 		if s.NoErrorf(err, "failed to receive result for job %d", i+1) {
 			s.Equalf(correlateRequest(i+1), value, "Unexpected result for job %d", i+1)
 		}
@@ -93,14 +93,14 @@ func (s *ProcessorTestSuite) TestProcessorError() {
 	reply := errTest
 
 	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(nil, reply).Once()
-	requests, results := makeRequestsResults(ids)
+	requests, results := makeRequestsResults[int, string](ids)
 
 	// when
 	s.Processor.Process(requests)
 
 	// then
 	for i, result := range results {
-		_, err := result.TryWait()
+		_, err := result.Try()
 		s.ErrorIsf(err, errTest, "failed to receive error for job %d", i+1)
 	}
 }
@@ -110,7 +110,7 @@ func (s *ProcessorTestSuite) TestProcessorDuplicateUncorrelated() {
 	ids := []int{1, 2, 3, 2}
 	reply := []string{"3", "4", "1"}
 
-	requests, results := makeRequestsResults(ids)
+	requests, results := makeRequestsResults[int, string](ids)
 	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(reply, nil).Once()
 
 	// when
@@ -118,7 +118,7 @@ func (s *ProcessorTestSuite) TestProcessorDuplicateUncorrelated() {
 
 	// then
 	for i, result := range results {
-		value, err := result.TryWait()
+		value, err := result.Try()
 		switch i {
 		case 1:
 			s.ErrorIsf(err, errNoResult, "failed to receive error for job %d", i+1)
@@ -132,16 +132,13 @@ func (s *ProcessorTestSuite) TestProcessorDuplicateUncorrelated() {
 	}
 }
 
-func makeRequestsResults(ids []int) ([]internal.BatchRequest[int, string], []*async.Memoizer[string]) {
-	requests := make([]internal.BatchRequest[int, string], 0, len(ids))
-	results := make([]*async.Memoizer[string], 0, len(ids))
-	for _, id := range ids {
-		future, promise := async.NewFuture[string]()
-		request := internal.BatchRequest[int, string]{Request: id, Result: promise}
-		result := future.Memoize()
-
-		requests = append(requests, request)
-		results = append(results, result)
+func makeRequestsResults[Q, R any](ids []Q) ([]internal.BatchRequest[Q, R], promise.List[R]) {
+	requests := make([]internal.BatchRequest[Q, R], len(ids))
+	results := make(promise.List[R], len(ids))
+	for i, id := range ids {
+		p, f := promise.New[R]()
+		requests[i] = internal.BatchRequest[Q, R]{Request: id, Result: p}
+		results[i] = f
 	}
 
 	return requests, results

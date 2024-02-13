@@ -5,7 +5,7 @@ go 1.21
 toolchain go1.22.0
 
 require (
-	fillmore-labs.com/exp/async v0.0.2
+	fillmore-labs.com/promise v0.0.1
 	github.com/stretchr/testify v1.8.4
 )
 

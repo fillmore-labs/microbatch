@@ -14,32 +14,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package collector
+package microbatch
 
 import (
 	"time"
+
+	"fillmore-labs.com/microbatch/internal/timer"
+	internal "fillmore-labs.com/microbatch/internal/types"
 )
 
-// Timer delegates control, but has a similar interface as time.Timer.
-type Timer struct {
-	// When the Timer expires, the current time will be sent on C.
-	C <-chan time.Time
-	// Interface to control the Timer.
-	Delegate
-}
-
-// Delegate is an interface to control a Timer.
-type Delegate interface {
-	Stop() bool
-	Reset(d time.Duration) bool
-}
-
-// NewTimer creates a new timer that is not running.
-func NewTimer() *Timer {
-	t := time.NewTimer(time.Hour)
-	if !t.Stop() {
-		<-t.C
+func NewTestBatcher[Q, R any](
+	process func([]internal.BatchRequest[Q, R]),
+	newTimer func(d time.Duration, f func(sent *bool)) timer.Timer,
+	opts ...Option,
+) *Batcher[Q, R] {
+	var option options
+	for _, opt := range opts {
+		opt.apply(&option)
 	}
 
-	return &Timer{C: t.C, Delegate: t}
+	queue := make(chan []internal.BatchRequest[Q, R], 1)
+	queue <- nil
+
+	return &Batcher[Q, R]{
+		process: process,
+		queue:   queue,
+
+		batchSize:     option.size,
+		batchDuration: option.timeout,
+
+		newTimer: newTimer,
+	}
 }

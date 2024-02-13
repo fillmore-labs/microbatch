@@ -14,12 +14,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package types
+package mocks
 
-import "fillmore-labs.com/promise"
+import (
+	internal "fillmore-labs.com/microbatch/internal/types"
+)
 
-// BatchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
-type BatchRequest[Q, R any] struct {
-	Request Q
-	Result  promise.Promise[R]
+// Processor defines the interface for processing batches of requests.
+type Processor[Q, R any] interface {
+	Process(requests []internal.BatchRequest[Q, R])
 }

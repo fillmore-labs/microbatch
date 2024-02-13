@@ -14,12 +14,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package types
+package mocks
 
-import "fillmore-labs.com/promise"
+import (
+	"time"
 
-// BatchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
-type BatchRequest[Q, R any] struct {
-	Request Q
-	Result  promise.Promise[R]
+	"fillmore-labs.com/microbatch/internal/timer"
+)
+
+// NewTimer for testing.
+type NewTimer interface {
+	New(d time.Duration, f func(sent *bool)) timer.Timer
 }

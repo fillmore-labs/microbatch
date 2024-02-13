@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch"
 	"fillmore-labs.com/microbatch/dataloader"
+	"fillmore-labs.com/promise"
 )
 
 type DataProcessor struct {
@@ -52,6 +52,9 @@ func (p *DataProcessor) ProcessJobs(keys []int) ([]QueryResult, error) {
 }
 
 func Example() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	p := &DataProcessor{}
 	d := dataloader.NewDataLoader(
 		p.ProcessJobs,
@@ -60,16 +63,22 @@ func Example() {
 	)
 
 	queries := [11]int{1, 2, 1, 2, 3, 3, 4, 1, 2, 3, 5}
-	var results [len(queries)]async.Awaitable[QueryResult]
+	results := make([]*promise.Memoizer[QueryResult], len(queries))
 	for i, query := range queries {
 		results[i] = d.Load(query)
 	}
 
-	d.Shutdown()
+	d.Send()
 
 	// Wait for all queries to complete
-	ctx := context.Background()
-	if _, err := async.WaitAllValues(ctx, results[:]...); err == nil {
+	var err error
+	for _, result := range results {
+		if _, e := result.Await(ctx); e != nil {
+			err = e
+		}
+	}
+
+	if err == nil {
 		fmt.Printf("Requested %d keys in %d calls\n", p.Keys.Load(), p.Calls.Load())
 	}
 

@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch"
 )
 
@@ -42,9 +41,17 @@ type (
 	JobResults []*JobResult
 )
 
-func (j *Job) JobID() JobID                  { return j.ID }
-func (j *JobResult) JobID() JobID            { return j.ID }
-func (j *JobResult) Unwrap() (string, error) { return j.Body, nil }
+func (j *Job) JobID() JobID       { return j.ID }
+func (j *JobResult) JobID() JobID { return j.ID }
+
+// unwrap unwraps a JobResult to payload and error.
+func unwrap(r *JobResult, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+
+	return r.Body, nil
+}
 
 type RemoteProcessor struct{}
 
@@ -84,15 +91,15 @@ func Example_blocking() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if result, err := batcher.SubmitJob(&Job{ID: JobID(i)}).Wait(ctx); err == nil {
-				fmt.Println(result.Body)
+			if result, err := unwrap(batcher.Execute(ctx, &Job{ID: JobID(i)})); err == nil {
+				fmt.Println(result)
 			}
 		}(i) // https://go.dev/doc/faq#closures_and_goroutines
 	}
 
 	// Shut down
 	wg.Wait()
-	batcher.Shutdown()
+	batcher.Send()
 	// Unordered output:
 	// Processed job 1
 	// Processed job 2
@@ -120,13 +127,13 @@ func Example_asynchronous() {
 
 	var wg sync.WaitGroup
 	for i := 1; i <= iterations; i++ {
-		future := batcher.SubmitJob(&Job{ID: JobID(i)})
+		future := batcher.Submit(&Job{ID: JobID(i)})
 
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 
-			result, err := async.Then(ctx, future, (*JobResult).Unwrap)
+			result, err := unwrap(future.Await(ctx))
 			if err == nil {
 				fmt.Println(result)
 			} else {
@@ -136,7 +143,7 @@ func Example_asynchronous() {
 	}
 
 	// Shut down
-	batcher.Shutdown()
+	batcher.Send()
 	wg.Wait()
 	// Unordered output:
 	// Processed job 1

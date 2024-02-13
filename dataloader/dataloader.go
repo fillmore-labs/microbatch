@@ -19,8 +19,8 @@ package dataloader
 import (
 	"sync"
 
-	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch"
+	"fillmore-labs.com/promise"
 )
 
 // DataLoader demonstrates how to use [microbatch.Batcher] to implement a simple Facebook [DataLoader].
@@ -28,8 +28,9 @@ import (
 //
 // [DataLoader]: https://www.youtube.com/watch?v=OQTnXNCDywA
 type DataLoader[K comparable, R any] struct {
-	cache   sync.Map                  // cache stores results mapped to keys
-	batcher *microbatch.Batcher[K, R] // batcher batches keys and retrieves results
+	mu      sync.RWMutex
+	cache   map[K]*promise.Memoizer[R] // cache stores keys mapped to results
+	batcher *microbatch.Batcher[K, R]  // batcher batches keys and retrieves results
 }
 
 // NewDataLoader create a new [DataLoader].
@@ -46,29 +47,32 @@ func NewDataLoader[K comparable, R any, KK ~[]K, RR ~[]R](
 	)
 
 	return &DataLoader[K, R]{
+		cache:   make(map[K]*promise.Memoizer[R]),
 		batcher: batcher,
 	}
 }
 
 // Load retrieves a value from the cache or loads it asynchronously.
-func (d *DataLoader[K, R]) Load(key K) *async.Memoizer[R] {
-	loadKeyOnce, ok := d.cache.Load(key)
+func (d *DataLoader[K, R]) Load(key K) *promise.Memoizer[R] {
+	d.mu.RLock()
+	memoizer, ok := d.cache[key]
+	d.mu.RUnlock()
+	if ok {
+		return memoizer
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	memoizer, ok = d.cache[key]
 	if !ok {
-		loadKeyOnce, _ = d.cache.LoadOrStore(key, sync.OnceValue(d.load(key)))
+		memoizer = d.batcher.Submit(key).Memoize()
+		d.cache[key] = memoizer
 	}
-	loadKey, _ := loadKeyOnce.(func() *async.Memoizer[R])
 
-	return loadKey()
+	return memoizer
 }
 
-// load submits the key to the batcher and memoizes the result.
-func (d *DataLoader[K, R]) load(key K) func() *async.Memoizer[R] {
-	return func() *async.Memoizer[R] {
-		return d.batcher.SubmitJob(key).Memoize()
-	}
-}
-
-// Shut down the underlying batcher.
-func (d *DataLoader[K, R]) Shutdown() {
-	d.batcher.Shutdown()
+// Send loads all submitted keys.
+func (d *DataLoader[K, R]) Send() {
+	d.batcher.Send()
 }

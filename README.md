@@ -20,7 +20,7 @@ It is also used in other contexts, like the [Facebook DataLoader](https://github
 
 ## Usage
 
-Try the example [at the Go Playground](https://go.dev/play/p/NbFwHqPOjFN).
+Try the example [at the Go Playground](https://go.dev/play/p/waWG_HOHzki).
 
 ### Implement `Job` and `JobResult`
 
@@ -48,7 +48,12 @@ func (r *JobResult) JobID() string { return r.ID }
 
 func (e RemoteError) Error() string { return e.msg }
 
-func (r *JobResult) Unwrap() (string, error) {
+// unwrap unwraps a JobResult to payload and error.
+func unwrap(r *JobResult, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+
 	if r.Error != "" {
 		return "", RemoteError{r.Error}
 	}
@@ -97,13 +102,13 @@ func processJobs(jobs Jobs) (JobResults, error) {
 
 	var wg sync.WaitGroup
 	for i := 1; i <= iterations; i++ {
-		future := batcher.SubmitJob(&Job{ID: strconv.Itoa(i)})
+		future := batcher.Submit(&Job{ID: strconv.Itoa(i)})
 
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 
-			result, err := async.Then(ctx, future, (*JobResult).Unwrap)
+			result, err := unwrap(future.Await(ctx))
 			if err == nil {
 				fmt.Println(result)
 			} else {
@@ -113,7 +118,7 @@ func processJobs(jobs Jobs) (JobResults, error) {
 	}
 
 	// Shut down
-	batcher.Shutdown()
+	batcher.Send()
 	wg.Wait()
 ```
 
@@ -121,8 +126,8 @@ func processJobs(jobs Jobs) (JobResults, error) {
 
 The package is designed to handle request batching efficiently, with a focus on code testability and modular
 architecture.
-The codebase is organized into three packages: the public `microbatch.Batcher` structure and two internal helpers,
-`processor.Processor` and `collector.Collector`.
+The codebase is organized into two packages: the public `microbatch.Batcher` structure and an internal helper,
+`processor.Processor`.
 
 ### Motivation
 
@@ -131,7 +136,7 @@ with less emphasis on immediate performance gains.
 
 While an alternative approach might involve constructing the correlation map during batch collection for performance
 reasons, the current design prioritizes testability and separation of concerns.
-In this context, the collector remains independent of correlation IDs, focusing solely on batch size and timing
+In this context, the batcher remains independent of correlation IDs, focusing solely on batch size and timing
 decisions.
 The responsibility of correlating requests and responses is encapsulated within the processor, contributing to a
 cleaner and more modular architecture.
@@ -146,16 +151,8 @@ The deliberate use of channels and immutability contributes to a more straightfo
 
 The public interface is the entry point for users interacting with the batching functionality.
 It is designed to be thread-safe, allowing safe invocation from any goroutine and simplifying usage.
-It communicates with the collector exclusively using channels.
-This deliberate choice simplifies synchronization concerns within the collector, contributing to a cleaner design and
-simplified reasoning about potential synchronization issues.
-
-#### Collector (`collector.Collector`)
-
-The collector is responsible for managing queued requests and initiating batch processing.
-It operates in a single worker goroutine, eliminating the need for locks.
-This design choice simplifies the execution flow and minimizes potential contention issues.
-The collector maintains an array of queued requests and, when a complete batch is formed or a maximum collection time
+The batcher is responsible for managing queued requests and initiating batch processing.
+The batcher maintains an array of queued requests and, when a complete batch is formed or a maximum collection time
 is reached, spawns a processor.
 The processor takes ownership of the queued requests, correlating individual requests and responses.
 

@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
-	"fillmore-labs.com/exp/async"
 	"fillmore-labs.com/microbatch"
 	"fillmore-labs.com/microbatch/internal/mocks"
+	"fillmore-labs.com/promise"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -73,14 +73,16 @@ func (s *BatcherTestSuite) TestBatcher() {
 	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(returned, nil).Once()
 
 	// when
-	var futures [iterations]async.Awaitable[string]
+	futures := make(promise.List[string], iterations)
 	for i := 0; i < iterations; i++ {
-		futures[i] = s.Batcher.SubmitJob(i + 1)
+		futures[i] = s.Batcher.Submit(i + 1)
 	}
-	s.Batcher.Shutdown()
+	s.Batcher.Send()
 
 	ctx := context.Background()
-	results, err := async.WaitAllValues(ctx, futures[:]...)
+	results, err := futures.AwaitAllValues(ctx)
+
+	s.Batcher.Send()
 
 	// then
 	s.NoErrorf(err, "Unexpected error executing jobs")
@@ -98,20 +100,6 @@ func makeResults(iterations int) []string {
 	return res
 }
 
-func (s *BatcherTestSuite) TestTerminatedBatcher() {
-	// given
-	s.Batcher.Shutdown()
-	s.Batcher.Shutdown()
-
-	// when
-	ctx := context.Background()
-	_, err := s.Batcher.SubmitJob(1).Wait(ctx)
-
-	// then
-	s.ErrorIs(err, microbatch.ErrBatcherTerminated)
-	s.BatchProcessor.AssertNotCalled(s.T(), "ProcessJobs", mock.Anything)
-}
-
 func (s *BatcherTestSuite) TestCancellation() {
 	// given
 	const iterations = 5
@@ -127,14 +115,14 @@ func (s *BatcherTestSuite) TestCancellation() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errors[i] = s.Batcher.SubmitJob(i + 1).Wait(ctx)
+			_, errors[i] = s.Batcher.Execute(ctx, i+1)
 		}(i)
 	}
 
 	cancel()
 	time.Sleep(settleGoRoutines)
 
-	s.Batcher.Shutdown()
+	s.Batcher.Send()
 
 	// then
 	wg.Wait()

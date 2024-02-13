@@ -17,26 +17,38 @@
 package microbatch
 
 import (
+	"context"
 	"errors"
 	"time"
 
-	"fillmore-labs.com/exp/async"
-	"fillmore-labs.com/microbatch/internal/collector"
 	"fillmore-labs.com/microbatch/internal/processor"
+	"fillmore-labs.com/microbatch/internal/timer"
 	internal "fillmore-labs.com/microbatch/internal/types"
+	"fillmore-labs.com/promise"
 )
 
 // Batcher handles submitting requests in batches and returning results through channels.
 type Batcher[Q, R any] struct {
-	requests chan<- internal.BatchRequest[Q, R]
+	// process processes batches of requests.
+	process func(requests []internal.BatchRequest[Q, R])
 
-	terminating chan<- struct{}
-	terminated  <-chan struct{}
+	// queue holds the collected requests until processing.
+	queue chan []internal.BatchRequest[Q, R]
+
+	// batchSize is the maximum number of requests per batch or zero, when unlimited.
+	batchSize int
+
+	// batchDuration is the maximum time a batch can collect before processing or zero, when unlimited.
+	batchDuration time.Duration
+
+	// timer tracks the batch duration and signals when it expires.
+	timer timer.Timer
+
+	// newTimer creates a new timer or a mock for testing
+	newTimer func(d time.Duration, f func(sent *bool)) timer.Timer
 }
 
 var (
-	// ErrBatcherTerminated is returned when the batcher is terminated.
-	ErrBatcherTerminated = errors.New("batcher terminated")
 	// ErrNoResult is returned when the response from processJobs is missing a
 	// matching correlation ID.
 	ErrNoResult = errors.New("no result")
@@ -58,13 +70,8 @@ func NewBatcher[Q, R any, C comparable, QQ ~[]Q, RR ~[]R](
 	correlateResult func(result R) C,
 	opts ...Option,
 ) *Batcher[Q, R] {
-	// Channels used for communicating from the Batcher to the Collector.
-	requests := make(chan internal.BatchRequest[Q, R])
-	terminating := make(chan struct{})
-	terminated := make(chan struct{})
-
 	// Wrap the supplied processor.
-	p := &processor.Processor[Q, R, C, QQ, RR]{
+	p := processor.Processor[Q, R, C, QQ, RR]{
 		ProcessJobs:    processJobs,
 		CorrelateQ:     correlateRequest,
 		CorrelateR:     correlateResult,
@@ -72,26 +79,22 @@ func NewBatcher[Q, R any, C comparable, QQ ~[]Q, RR ~[]R](
 		ErrDuplicateID: ErrDuplicateID,
 	}
 
-	option := options{}
+	var option options
 	for _, opt := range opts {
-		opt(&option)
+		opt.apply(&option)
 	}
 
-	c := &collector.Collector[Q, R]{
-		Requests:      requests,
-		Terminating:   terminating,
-		Terminated:    terminated,
-		Processor:     p,
-		BatchSize:     option.size,
-		BatchDuration: option.timeout,
-	}
-
-	go c.Run()
+	queue := make(chan []internal.BatchRequest[Q, R], 1)
+	queue <- nil
 
 	return &Batcher[Q, R]{
-		requests:    requests,
-		terminating: terminating,
-		terminated:  terminated,
+		process: p.Process,
+		queue:   queue,
+
+		batchSize:     option.size,
+		batchDuration: option.timeout,
+
+		newTimer: timer.New,
 	}
 }
 
@@ -102,47 +105,109 @@ type options struct {
 }
 
 // Option defines configurations for [NewBatcher].
-type Option func(*options)
+type Option interface {
+	apply(opts *options)
+}
 
 // WithSize is an option to configure the batch size.
 func WithSize(size int) Option {
-	return func(o *options) {
-		o.size = size
-	}
+	return sizeOption{size: size}
+}
+
+type sizeOption struct {
+	size int
+}
+
+func (o sizeOption) apply(opts *options) {
+	opts.size = o.size
 }
 
 // WithTimeout is an option to configure the batch timeout.
 func WithTimeout(timeout time.Duration) Option {
-	return func(o *options) {
-		o.timeout = timeout
-	}
+	return timeoutOption{timeout: timeout}
 }
 
-// SubmitJob Submits a job without waiting for the result.
-func (b *Batcher[Q, R]) SubmitJob(request Q) async.Future[R] {
-	future, promise := async.NewFuture[R]()
+type timeoutOption struct {
+	timeout time.Duration
+}
+
+func (o timeoutOption) apply(opts *options) {
+	opts.timeout = o.timeout
+}
+
+// Submit submits a job without waiting for the result.
+func (b *Batcher[Q, R]) Submit(request Q) promise.Future[R] {
+	result, future := promise.New[R]()
 	batchRequest := internal.BatchRequest[Q, R]{
 		Request: request,
-		Result:  promise,
+		Result:  result,
 	}
 
-	select {
-	case b.requests <- batchRequest:
-
-	case <-b.terminated:
-		promise.Reject(ErrBatcherTerminated)
-	}
+	b.enqueue(batchRequest)
 
 	return future
 }
 
-// Shutdown needs to be called to reclaim resources and send the last batch.
-// No calls to [Batcher.SubmitJob] after this will be accepted.
-func (b *Batcher[_, _]) Shutdown() {
-	select {
-	case b.terminating <- struct{}{}:
-		<-b.terminated
+// Execute submits a job and waits for the result.
+func (b *Batcher[Q, R]) Execute(ctx context.Context, request Q) (R, error) {
+	return b.Submit(request).Await(ctx)
+}
 
-	case <-b.terminated:
+// Send sends a batch early.
+func (b *Batcher[_, _]) Send() {
+	batch := <-b.queue
+	b.stopTimer()
+	b.queue <- nil
+
+	if len(batch) > 0 {
+		go b.process(batch)
 	}
+}
+
+func (b *Batcher[Q, R]) enqueue(batchRequest internal.BatchRequest[Q, R]) {
+	batch := <-b.queue
+	batch = append(batch, batchRequest)
+
+	switch len(batch) {
+	case b.batchSize:
+		b.stopTimer()
+		go b.process(batch)
+		batch = nil
+
+	case 1:
+		b.startTimer()
+	}
+
+	b.queue <- batch
+}
+
+func (b *Batcher[_, _]) startTimer() {
+	if b.batchDuration <= 0 {
+		return
+	}
+
+	b.timer = b.newTimer(b.batchDuration, b.timedSend)
+}
+
+func (b *Batcher[_, _]) timedSend(sent *bool) {
+	batch := <-b.queue
+	if *sent {
+		b.queue <- batch
+
+		return
+	}
+
+	b.queue <- nil
+	if len(batch) > 0 {
+		go b.process(batch)
+	}
+}
+
+func (b *Batcher[_, _]) stopTimer() {
+	if b.timer == nil {
+		return
+	}
+
+	b.timer.Stop()
+	b.timer = nil
 }
