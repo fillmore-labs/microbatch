@@ -73,22 +73,22 @@ func (s *BatcherTestSuite) TestBatcher() {
 	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(returned, nil).Once()
 
 	// when
-	futures := make(promise.List[string], iterations)
+	futures := make([]promise.Future[string], iterations)
 	for i := 0; i < iterations; i++ {
 		futures[i] = s.Batcher.Submit(i + 1)
 	}
 	s.Batcher.Send()
 
 	ctx := context.Background()
-	results, err := futures.AwaitAllValues(ctx)
+	results, err := promise.AwaitAllValues(ctx, futures...)
 
 	s.Batcher.Send()
 
 	// then
-	s.NoErrorf(err, "Unexpected error executing jobs")
-
-	expected := makeResults(iterations)
-	s.Equal(expected, results)
+	if s.NoErrorf(err, "Unexpected error executing jobs") {
+		expected := makeResults(iterations)
+		s.Equal(expected, results)
+	}
 }
 
 func makeResults(iterations int) []string {

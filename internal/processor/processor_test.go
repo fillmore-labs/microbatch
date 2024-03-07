@@ -132,9 +132,9 @@ func (s *ProcessorTestSuite) TestProcessorDuplicateUncorrelated() {
 	}
 }
 
-func makeRequestsResults[Q, R any](ids []Q) ([]internal.BatchRequest[Q, R], promise.List[R]) {
+func makeRequestsResults[Q, R any](ids []Q) ([]internal.BatchRequest[Q, R], []promise.Future[R]) {
 	requests := make([]internal.BatchRequest[Q, R], len(ids))
-	results := make(promise.List[R], len(ids))
+	results := make([]promise.Future[R], len(ids))
 	for i, id := range ids {
 		p, f := promise.New[R]()
 		requests[i] = internal.BatchRequest[Q, R]{Request: id, Result: p}

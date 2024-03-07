@@ -1,0 +1,31 @@
+---
+name: Test
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: ✔ Check out
+        uses: actions/checkout@v4
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          check-latest: true
+      - name: 🧸 golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.56.2
+      - name: 🔨 Test
+        run: go test -race ./...
