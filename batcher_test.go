@@ -18,16 +18,16 @@ package microbatch_test
 
 import (
 	"context"
-	"math/rand"
+	"math/rand/v2"
 	"reflect"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"fillmore-labs.com/async"
 	"fillmore-labs.com/microbatch"
 	"fillmore-labs.com/microbatch/internal/mocks"
-	"fillmore-labs.com/promise"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -73,16 +73,24 @@ func (s *BatcherTestSuite) TestBatcher() {
 	s.BatchProcessor.EXPECT().ProcessJobs(mock.Anything).Return(returned, nil).Once()
 
 	// when
-	futures := make([]promise.Future[string], iterations)
+	futures := make([]*async.Future[string], iterations)
 	for i := 0; i < iterations; i++ {
 		futures[i] = s.Batcher.Submit(i + 1)
 	}
 	s.Batcher.Send()
 
 	ctx := context.Background()
-	results, err := promise.AwaitAllValues(ctx, futures...)
+	results := make([]string, 0, len(futures))
+	var err error
+	for _, f := range futures {
+		result, e := f.Await(ctx)
+		if e != nil {
+			err = e
 
-	s.Batcher.Send()
+			break
+		}
+		results = append(results, result)
+	}
 
 	// then
 	if s.NoErrorf(err, "Unexpected error executing jobs") {

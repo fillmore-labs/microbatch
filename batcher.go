@@ -21,31 +21,31 @@ import (
 	"errors"
 	"time"
 
+	"fillmore-labs.com/async"
 	"fillmore-labs.com/microbatch/internal/processor"
 	"fillmore-labs.com/microbatch/internal/timer"
 	internal "fillmore-labs.com/microbatch/internal/types"
-	"fillmore-labs.com/promise"
 )
 
 // Batcher handles submitting requests in batches and returning results through channels.
 type Batcher[Q, R any] struct {
-	// process processes batches of requests.
-	process func(requests []internal.BatchRequest[Q, R])
-
 	// queue holds the collected requests until processing.
 	queue chan []internal.BatchRequest[Q, R]
 
-	// batchSize is the maximum number of requests per batch or zero, when unlimited.
-	batchSize int
-
-	// batchDuration is the maximum time a batch can collect before processing or zero, when unlimited.
-	batchDuration time.Duration
+	// process processes batches of requests.
+	process func(requests []internal.BatchRequest[Q, R])
 
 	// timer tracks the batch duration and signals when it expires.
 	timer timer.Timer
 
 	// newTimer creates a new timer or a mock for testing
 	newTimer func(d time.Duration, f func(sent *bool)) timer.Timer
+
+	// batchDuration is the maximum time a batch can collect before processing or zero, when unlimited.
+	batchDuration time.Duration
+
+	// batchSize is the maximum number of requests per batch or zero, when unlimited.
+	batchSize int
 }
 
 var (
@@ -84,18 +84,19 @@ func NewBatcher[Q, R any, C comparable, QQ ~[]Q, RR ~[]R](
 		opt.apply(&option)
 	}
 
-	queue := make(chan []internal.BatchRequest[Q, R], 1)
-	queue <- nil
-
-	return &Batcher[Q, R]{
+	b := &Batcher[Q, R]{
+		queue:   make(chan []internal.BatchRequest[Q, R], 1),
 		process: p.Process,
-		queue:   queue,
-
-		batchSize:     option.size,
-		batchDuration: option.timeout,
 
 		newTimer: timer.New,
+
+		batchDuration: option.timeout,
+		batchSize:     option.size,
 	}
+
+	b.emptyQueue()
+
+	return b
 }
 
 // options defines configurable parameters for the batcher.
@@ -110,7 +111,7 @@ type Option interface {
 }
 
 // WithSize is an option to configure the batch size.
-func WithSize(size int) Option {
+func WithSize(size int) Option { //nolint:ireturn
 	return sizeOption{size: size}
 }
 
@@ -123,7 +124,7 @@ func (o sizeOption) apply(opts *options) {
 }
 
 // WithTimeout is an option to configure the batch timeout.
-func WithTimeout(timeout time.Duration) Option {
+func WithTimeout(timeout time.Duration) Option { //nolint:ireturn
 	return timeoutOption{timeout: timeout}
 }
 
@@ -136,16 +137,16 @@ func (o timeoutOption) apply(opts *options) {
 }
 
 // Submit submits a job without waiting for the result.
-func (b *Batcher[Q, R]) Submit(request Q) promise.Future[R] {
-	result, future := promise.New[R]()
+func (b *Batcher[Q, R]) Submit(request Q) *async.Future[R] {
+	var response async.Promise[R]
 	batchRequest := internal.BatchRequest[Q, R]{
 		Request: request,
-		Result:  result,
+		Result:  &response,
 	}
 
 	b.enqueue(batchRequest)
 
-	return future
+	return response.Future()
 }
 
 // Execute submits a job and waits for the result.
@@ -155,9 +156,9 @@ func (b *Batcher[Q, R]) Execute(ctx context.Context, request Q) (R, error) {
 
 // Send sends a batch early.
 func (b *Batcher[_, _]) Send() {
-	batch := <-b.queue
 	b.stopTimer()
-	b.queue <- nil
+	batch := <-b.queue
+	b.emptyQueue()
 
 	if len(batch) > 0 {
 		go b.process(batch)
@@ -172,7 +173,7 @@ func (b *Batcher[Q, R]) enqueue(batchRequest internal.BatchRequest[Q, R]) {
 	case b.batchSize:
 		b.stopTimer()
 		go b.process(batch)
-		batch = nil
+		batch = make([]internal.BatchRequest[Q, R], 0, b.batchSize)
 
 	case 1:
 		b.startTimer()
@@ -197,7 +198,7 @@ func (b *Batcher[_, _]) timedSend(sent *bool) {
 		return
 	}
 
-	b.queue <- nil
+	b.emptyQueue()
 	if len(batch) > 0 {
 		go b.process(batch)
 	}
@@ -210,4 +211,14 @@ func (b *Batcher[_, _]) stopTimer() {
 
 	b.timer.Stop()
 	b.timer = nil
+}
+
+func (b *Batcher[Q, R]) emptyQueue() {
+	if b.batchSize == 0 {
+		b.queue <- nil
+
+		return
+	}
+
+	b.queue <- make([]internal.BatchRequest[Q, R], 0, b.batchSize)
 }

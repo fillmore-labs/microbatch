@@ -16,10 +16,10 @@
 
 package types
 
-import "fillmore-labs.com/promise"
+import "fillmore-labs.com/async"
 
 // BatchRequest represents a single request submitted to the [Batcher], along with the channel to return the result on.
 type BatchRequest[Q, R any] struct {
 	Request Q
-	Result  promise.Promise[R]
+	Result  *async.Promise[R]
 }

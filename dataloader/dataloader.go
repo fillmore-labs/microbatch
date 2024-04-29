@@ -19,8 +19,8 @@ package dataloader
 import (
 	"sync"
 
+	"fillmore-labs.com/async"
 	"fillmore-labs.com/microbatch"
-	"fillmore-labs.com/promise"
 )
 
 // DataLoader demonstrates how to use [microbatch.Batcher] to implement a simple Facebook [DataLoader].
@@ -28,9 +28,9 @@ import (
 //
 // [DataLoader]: https://www.youtube.com/watch?v=OQTnXNCDywA
 type DataLoader[K comparable, R any] struct {
+	batcher *microbatch.Batcher[K, R]
+	cache   map[K]*async.Future[R]
 	mu      sync.RWMutex
-	cache   map[K]*promise.Memoizer[R] // cache stores keys mapped to results
-	batcher *microbatch.Batcher[K, R]  // batcher batches keys and retrieves results
 }
 
 // NewDataLoader create a new [DataLoader].
@@ -47,29 +47,29 @@ func NewDataLoader[K comparable, R any, KK ~[]K, RR ~[]R](
 	)
 
 	return &DataLoader[K, R]{
-		cache:   make(map[K]*promise.Memoizer[R]),
+		cache:   make(map[K]*async.Future[R]),
 		batcher: batcher,
 	}
 }
 
 // Load retrieves a value from the cache or loads it asynchronously.
-func (d *DataLoader[K, R]) Load(key K) *promise.Memoizer[R] {
+func (d *DataLoader[K, R]) Load(key K) *async.Future[R] {
 	d.mu.RLock()
-	memoizer, ok := d.cache[key]
+	future, ok := d.cache[key]
 	d.mu.RUnlock()
 	if ok {
-		return memoizer
+		return future
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	memoizer, ok = d.cache[key]
+	future, ok = d.cache[key]
 	if !ok {
-		memoizer = d.batcher.Submit(key).Memoize()
-		d.cache[key] = memoizer
+		future = d.batcher.Submit(key)
+		d.cache[key] = future
 	}
 
-	return memoizer
+	return future
 }
 
 // Send loads all submitted keys.

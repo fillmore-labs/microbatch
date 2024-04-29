@@ -99,7 +99,6 @@ func Example_blocking() {
 
 	// Shut down
 	wg.Wait()
-	batcher.Send()
 	// Unordered output:
 	// Processed job 1
 	// Processed job 2

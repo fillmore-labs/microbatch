@@ -21,10 +21,10 @@ import (
 	"strconv"
 	"testing"
 
+	"fillmore-labs.com/async"
 	"fillmore-labs.com/microbatch/internal/mocks"
 	"fillmore-labs.com/microbatch/internal/processor"
 	internal "fillmore-labs.com/microbatch/internal/types"
-	"fillmore-labs.com/promise"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
@@ -132,11 +132,12 @@ func (s *ProcessorTestSuite) TestProcessorDuplicateUncorrelated() {
 	}
 }
 
-func makeRequestsResults[Q, R any](ids []Q) ([]internal.BatchRequest[Q, R], []promise.Future[R]) {
+func makeRequestsResults[Q, R any](ids []Q) ([]internal.BatchRequest[Q, R], []*async.Future[R]) {
 	requests := make([]internal.BatchRequest[Q, R], len(ids))
-	results := make([]promise.Future[R], len(ids))
+	results := make([]*async.Future[R], len(ids))
 	for i, id := range ids {
-		p, f := promise.New[R]()
+		p := &async.Promise[R]{}
+		f := p.Future()
 		requests[i] = internal.BatchRequest[Q, R]{Request: id, Result: p}
 		results[i] = f
 	}

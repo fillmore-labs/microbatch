@@ -34,7 +34,7 @@ func (t timer) Stop() {
 	}
 }
 
-func New(d time.Duration, f func(sent *bool)) Timer {
+func New(d time.Duration, f func(sent *bool)) Timer { //nolint:ireturn
 	sent := new(bool)
 
 	return timer{

@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"fillmore-labs.com/async"
 	internal "fillmore-labs.com/microbatch/internal/types"
-	"fillmore-labs.com/promise"
 )
 
 // Processor handles batch processing of jobs and results.
@@ -42,8 +42,8 @@ type Processor[Q, R any, C comparable, QQ ~[]Q, RR ~[]R] struct {
 	ErrDuplicateID error
 }
 
-// resultMap is map from correlation ID to result [promise.Promise].
-type resultMap[R any, C comparable] map[C]promise.Promise[R]
+// resultMap is map from correlation ID to result [async.Promise].
+type resultMap[R any, C comparable] map[C]*async.Promise[R]
 
 // Process takes a batch of requests and handles processing.
 func (p *Processor[Q, R, _, _, _]) Process(requests []internal.BatchRequest[Q, R]) {

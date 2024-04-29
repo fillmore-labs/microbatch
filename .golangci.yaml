@@ -19,13 +19,23 @@ linters:
     - depguard
     - exhaustruct
     - forbidigo
-    - ireturn
     - nonamedreturns
     - varnamelen
     - wrapcheck
     - wsl
+    # Go 1.22
+    - copyloopvar
+    - intrange
 linters-settings:
   testifylint:
     enable-all: true
     disable:
       - require-error
+  ireturn:
+    allow:
+      - error
+      - generic
+issues:
+  exclude-generated-strict: true
+  exclude-files:
+    - _mock\.go$

@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"fillmore-labs.com/async"
 	"fillmore-labs.com/microbatch"
 	"fillmore-labs.com/microbatch/dataloader"
-	"fillmore-labs.com/promise"
 )
 
 type DataProcessor struct {
@@ -63,7 +63,7 @@ func Example() {
 	)
 
 	queries := [11]int{1, 2, 1, 2, 3, 3, 4, 1, 2, 3, 5}
-	results := make([]*promise.Memoizer[QueryResult], len(queries))
+	results := make([]*async.Future[QueryResult], len(queries))
 	for i, query := range queries {
 		results[i] = d.Load(query)
 	}
